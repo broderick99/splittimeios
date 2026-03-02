@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(npx --version)",
+      "Bash(npx create-expo-app@latest:*)",
+      "Bash(npx expo install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(xcrun simctl list runtimes:*)",
+      "Bash(ls:*)",
+      "Bash(npx expo export --dump-sourcemap)"
+    ]
+  }
+}
