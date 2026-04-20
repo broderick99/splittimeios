@@ -44,6 +44,15 @@ private enum SocialTimestampFormatter {
     }
 }
 
+private func isTaskCancellation(_ error: Error) -> Bool {
+    if error is CancellationError {
+        return true
+    }
+
+    let nsError = error as NSError
+    return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+}
+
 @MainActor
 private final class TeamAnnouncementsViewModel: ObservableObject {
     @Published private(set) var announcements: [Announcement] = []
@@ -64,6 +73,9 @@ private final class TeamAnnouncementsViewModel: ObservableObject {
             announcements = try await service.fetchAnnouncements().sorted { $0.createdAt > $1.createdAt }
             errorMessage = nil
         } catch {
+            if isTaskCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -111,6 +123,9 @@ private final class AnnouncementCommentsStore: ObservableObject {
             commentsByAnnouncementID[announcementID] = comments.sorted { $0.createdAt < $1.createdAt }
             errorMessage = nil
         } catch {
+            if isTaskCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -133,11 +148,15 @@ private final class AnnouncementCommentsStore: ObservableObject {
             errorMessage = nil
             return true
         } catch {
+            if isTaskCancellation(error) {
+                return false
+            }
             errorMessage = error.localizedDescription
             return false
         }
     }
 }
+
 
 @MainActor
 private final class TeamChatViewModel: ObservableObject {
@@ -160,6 +179,9 @@ private final class TeamChatViewModel: ObservableObject {
             messages = try await service.fetchMessages().sorted { $0.createdAt < $1.createdAt }
             errorMessage = nil
         } catch {
+            if isTaskCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -187,6 +209,9 @@ private final class TeamChatViewModel: ObservableObject {
             errorMessage = nil
             return true
         } catch {
+            if isTaskCancellation(error) {
+                return false
+            }
             errorMessage = error.localizedDescription
             return false
         }

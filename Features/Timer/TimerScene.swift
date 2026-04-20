@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct TimerScene: View {
     @ObservedObject var localStore: LocalStore
@@ -97,7 +98,9 @@ struct TimerScene: View {
     }
 
     private var timerControlsBar: some View {
-        HStack(spacing: 10) {
+        let sideSlotWidth: CGFloat = timerRuntimeStore.isActive ? 78 : 34
+
+        return HStack(spacing: 10) {
             HStack(spacing: 10) {
                 if timerRuntimeStore.isActive {
                     Button {
@@ -112,7 +115,7 @@ struct TimerScene: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(width: 78, alignment: .leading)
+            .frame(width: sideSlotWidth, alignment: .leading)
 
             Spacer(minLength: 8)
 
@@ -165,16 +168,13 @@ struct TimerScene: View {
                         .padding(.vertical, 6)
                         .presentationCompactAdaptation(.popover)
                     }
-                } else {
-                    Color.clear
-                        .frame(width: 34, height: 34)
                 }
             }
-            .frame(width: 78, alignment: .trailing)
+            .frame(width: sideSlotWidth, alignment: .trailing)
         }
         .padding(.horizontal, AppTheme.Metrics.screenPadding)
         .padding(.top, 4)
-        .padding(.bottom, 2)
+        .padding(.bottom, 8)
         .background(
             topChromeBackground
                 .ignoresSafeArea(edges: .top)
@@ -224,7 +224,7 @@ struct TimerScene: View {
                             showTemplateChooser = true
                         }
                     }
-                    .buttonStyle(TimerSuccessButtonStyle())
+                    .buttonStyle(PrimaryButtonStyle())
                     .alert("Select workout from template?", isPresented: $showTemplateChooser) {
                         Button("Yes") {
                             showGroupWorkoutSetup = true
@@ -644,64 +644,188 @@ private struct GroupWorkoutPage: View {
     let onUndoSplit: (String) -> Void
     let onAdvanceAthlete: (String) -> Void
 
-    private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
-
     var body: some View {
         ScrollView {
-            VStack(spacing: 18) {
-                Text(formatElapsedTime(milliseconds: elapsedMilliseconds))
-                    .font(.system(size: 52, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(block.groupStatus == .running ? AppTheme.Palette.success : AppTheme.Palette.textPrimary)
-
-                HStack(spacing: 10) {
-                    let hasIdleAthlete = block.athletes.contains(where: { $0.status == .idle })
-                    let hasRunningAthlete = block.athletes.contains(where: { $0.status == .running })
-                    let hasRecoveryReadyAthlete = block.athletes.contains(where: {
-                        athleteProgressByID[$0.athleteID]?.stepStatus == .recoveryWaiting
-                    })
-
-                    if hasIdleAthlete {
-                        Button("Start Group", action: onStartGroup)
-                            .buttonStyle(TimerSuccessButtonStyle())
-                    }
-
-                    if hasRecoveryReadyAthlete {
-                        Button("Group GO", action: onAdvanceGroup)
-                            .buttonStyle(TimerSuccessButtonStyle())
-                    }
-
-                    if hasRunningAthlete && !hasRecoveryReadyAthlete {
-                        Button("Lap Group", action: onLapGroup)
-                            .buttonStyle(SecondaryButtonStyle())
-                    }
-
-                    if hasRunningAthlete || hasRecoveryReadyAthlete {
-                        Button("Stop Group", action: onStopGroup)
-                            .buttonStyle(TimerDangerButtonStyle())
-                    }
-                }
-
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(block.athletes) { timer in
-                        AthleteTimerTile(
-                            timer: timer,
-                            displayTick: displayTick,
-                            showTapHint: preferences.showTapHints,
-                            progress: athleteProgressByID[timer.athleteID],
-                            currentStep: currentStep(for: timer.athleteID),
-                            onStart: { onStartAthlete(timer.athleteID) },
-                            onStop: { onStopAthlete(timer.athleteID) },
-                            onSplit: { onSplitAthlete(timer.athleteID) },
-                            onUndo: { onUndoSplit(timer.athleteID) },
-                            onAdvance: { onAdvanceAthlete(timer.athleteID) }
-                        )
-                    }
-                }
+            VStack(spacing: 12) {
+                contextBar
+                groupClockCard
+                athleteListCard
             }
             .padding(AppTheme.Metrics.screenPadding)
             .padding(.bottom, 32)
         }
+    }
+
+    private var contextBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let summary = stepSummary {
+                Text(summary.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+                    .lineLimit(1)
+
+                HStack(spacing: 4) {
+                    ForEach(0..<summary.total, id: \.self) { index in
+                        Capsule(style: .continuous)
+                            .fill(index < summary.current ? AppTheme.Palette.primary : AppTheme.Palette.border)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 4)
+                    }
+                }
+            } else {
+                Text(block.groupName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var groupClockCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("GROUP CLOCK")
+                        .font(.caption2.weight(.bold))
+                        .kerning(0.5)
+                        .foregroundStyle(AppTheme.Palette.textSecondary)
+
+                    Text(formatElapsedTime(milliseconds: elapsedMilliseconds))
+                        .font(v1ClockFont)
+                        .tracking(-1)
+                        .monospacedDigit()
+                        .foregroundStyle(AppTheme.Palette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 8) {
+                    if hasRecoveryReadyAthlete {
+                        Button("Group GO", action: onAdvanceGroup)
+                            .buttonStyle(TimerCompactSuccessButtonStyle())
+                    } else if hasIdleAthlete {
+                        Button("Start", action: onStartGroup)
+                            .buttonStyle(TimerCompactSuccessButtonStyle())
+                    } else if hasRunningAthlete {
+                        Button("Lap", action: onLapGroup)
+                            .buttonStyle(TimerCompactSecondaryButtonStyle())
+                    }
+
+                    if hasRunningAthlete || hasRecoveryReadyAthlete {
+                        Button("Stop", action: onStopGroup)
+                            .buttonStyle(TimerCompactDangerButtonStyle())
+                    }
+                }
+            }
+
+            HStack(spacing: 12) {
+                statusLegend(label: "\(runningCount) running", color: AppTheme.Palette.success)
+                statusLegend(label: "\(recoveryCount) rec", color: .orange)
+                statusLegend(label: "\(doneCount) done", color: AppTheme.Palette.textSecondary)
+            }
+        }
+        .appCard()
+    }
+
+    private var athleteListCard: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(block.athletes.enumerated()), id: \.element.id) { index, timer in
+                AthleteTimerTile(
+                    timer: timer,
+                    displayTick: displayTick,
+                    showTapHint: preferences.showTapHints,
+                    progress: athleteProgressByID[timer.athleteID],
+                    currentStep: currentStep(for: timer.athleteID),
+                    onStart: { onStartAthlete(timer.athleteID) },
+                    onStop: { onStopAthlete(timer.athleteID) },
+                    onSplit: { onSplitAthlete(timer.athleteID) },
+                    onUndo: { onUndoSplit(timer.athleteID) },
+                    onAdvance: { onAdvanceAthlete(timer.athleteID) }
+                )
+
+                if index < block.athletes.count - 1 {
+                    Divider()
+                        .padding(.leading, 70)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cornerRadius, style: .continuous)
+                .fill(AppTheme.Palette.elevatedSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.Metrics.cornerRadius, style: .continuous)
+                .stroke(AppTheme.Palette.border, lineWidth: 1)
+        )
+    }
+
+    private var runningCount: Int {
+        block.athletes.filter { $0.status == .running }.count
+    }
+
+    private var recoveryCount: Int {
+        block.athletes.filter { athlete in
+            let status = athleteProgressByID[athlete.athleteID]?.stepStatus
+            return status == .recoveryCountdown || status == .recoveryWaiting
+        }.count
+    }
+
+    private var doneCount: Int {
+        block.athletes.filter { athlete in
+            athlete.status == .stopped || athleteProgressByID[athlete.athleteID]?.stepStatus == .completed
+        }.count
+    }
+
+    private var hasIdleAthlete: Bool {
+        block.athletes.contains(where: { $0.status == .idle })
+    }
+
+    private var hasRunningAthlete: Bool {
+        block.athletes.contains(where: { $0.status == .running })
+    }
+
+    private var hasRecoveryReadyAthlete: Bool {
+        block.athletes.contains(where: { athleteProgressByID[$0.athleteID]?.stepStatus == .recoveryWaiting })
+    }
+
+    private var stepSummary: (title: String, current: Int, total: Int)? {
+        for athlete in block.athletes {
+            guard let progress = athleteProgressByID[athlete.athleteID] else { continue }
+            let athleteSteps = structuredStepsByAthleteID[athlete.athleteID] ?? structuredSteps
+            guard let athleteSteps, !athleteSteps.isEmpty else { continue }
+            let safeIndex = min(max(progress.currentStepIndex, 0), athleteSteps.count - 1)
+            let currentStep = athleteSteps[safeIndex]
+            return (
+                title: "\(block.groupName) · Step \(safeIndex + 1) of \(athleteSteps.count) · \(currentStep.label.uppercased())",
+                current: safeIndex + 1,
+                total: athleteSteps.count
+            )
+        }
+        return nil
+    }
+
+    private func statusLegend(label: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(AppTheme.Palette.textSecondary)
+        }
+    }
+
+    // Match HTML mono stack: ui-monospace, "SF Mono", Menlo, monospace.
+    private var v1ClockFont: Font {
+        for name in ["SFMono-Bold", "SF Mono", "Menlo-Bold"] {
+            if let uiFont = UIFont(name: name, size: 40) {
+                return Font(uiFont)
+            }
+        }
+        return .system(size: 40, weight: .bold, design: .monospaced)
     }
 
     private func currentStep(for athleteID: String) -> ExpandedStep? {
@@ -727,112 +851,111 @@ private struct AthleteTimerTile: View {
     let onAdvance: () -> Void
 
     var body: some View {
-        Button {
-            handleTap()
-        } label: {
-            VStack(spacing: 10) {
-                ZStack(alignment: .topTrailing) {
-                    avatar
-                        .frame(maxWidth: .infinity, alignment: .center)
+        HStack(spacing: 12) {
+            avatar
 
-                    if let currentStep, progress?.stepStatus == .active {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(currentStep.label)
-                                .font(.caption2.weight(.bold))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                            if let repeatIteration = currentStep.repeatIteration, let repeatTotal = currentStep.repeatTotal {
-                                Text("\(repeatIteration)/\(repeatTotal)")
-                                    .font(.caption2)
-                            }
-                        }
-                        .foregroundStyle(AppTheme.Palette.textSecondary)
-                        .frame(maxWidth: 96, alignment: .trailing)
-                        .padding(.top, 2)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-
+            VStack(alignment: .leading, spacing: 3) {
                 Text(timer.athleteName)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(AppTheme.Palette.textPrimary)
                     .lineLimit(1)
 
-                if isRecoveryCountdown {
-                    Text(formatCountdown(milliseconds: recoveryRemainingMilliseconds))
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.orange)
-                } else if isRecoveryWaiting {
-                    Text("GO")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(AppTheme.Palette.success)
-                } else if timer.status == .stopped, let finalSplit = timer.splits.last(where: \.isFinal) {
-                    Text(formatElapsedTime(milliseconds: finalSplit.elapsedMilliseconds))
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(AppTheme.Palette.primary)
-                } else if let lapInfo {
-                    VStack(spacing: 2) {
-                        Text("S\(lapInfo.count): \(formatElapsedTime(milliseconds: lapInfo.lastLapMilliseconds))")
-                            .font(.footnote.weight(.semibold))
+                HStack(spacing: 6) {
+                    Text(statusLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(statusColor)
+                    if let stepSubtitle {
+                        Text(stepSubtitle)
+                            .font(.caption)
                             .foregroundStyle(AppTheme.Palette.textSecondary)
-                        if timer.status == .running, let liveLap = liveLapMilliseconds {
-                            Text(formatElapsedTime(milliseconds: liveLap))
-                                .font(.title3.weight(.bold))
-                                .monospacedDigit()
-                                .foregroundStyle(AppTheme.Palette.textPrimary)
-                        }
+                            .lineLimit(1)
                     }
-                } else {
-                    Text(timer.status == .idle ? "Ready" : "Running")
-                        .font(.footnote.weight(.semibold))
+                }
+
+                if let lastSplitText {
+                    Text(lastSplitText)
+                        .font(.caption2.weight(.semibold))
                         .foregroundStyle(AppTheme.Palette.textSecondary)
                 }
 
-                if timer.status == .running {
-                    HStack(spacing: 10) {
-                        Button("Stop", action: onStop)
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppTheme.Palette.danger)
-
-                        if showTapHint {
-                            Text("tap = split")
-                                .font(.caption)
-                                .foregroundStyle(AppTheme.Palette.textSecondary)
-                        }
-                    }
-                } else if let progress, progress.stepStatus == .completed {
-                    Text("\(workSplitCount) split\(workSplitCount == 1 ? "" : "s")")
-                        .font(.caption)
+                if showTapHint && timer.status == .running {
+                    Text("tap = split")
+                        .font(.caption2)
                         .foregroundStyle(AppTheme.Palette.textSecondary)
-                } else if !timer.splits.isEmpty {
-                    Button("Undo Last Split", action: onUndo)
-                        .font(.caption.weight(.semibold))
                 }
             }
-            .frame(maxWidth: .infinity)
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(tileBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(tileBorder, lineWidth: 2)
-            )
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(timeValueLabel)
+                    .font(v1RowTimerFont)
+                    .tracking(-0.5)
+                    .monospacedDigit()
+                    .foregroundStyle(timeValueColor)
+                Text(timeCaptionLabel)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+            }
+
+            if timer.status == .running {
+                Button("Stop", action: onStop)
+                    .buttonStyle(TimerCompactDangerButtonStyle())
+            } else if isRecoveryWaiting {
+                Button("Go", action: onAdvance)
+                    .buttonStyle(TimerCompactSuccessButtonStyle())
+            } else if canUndo {
+                Button("Undo", action: onUndo)
+                    .buttonStyle(TimerCompactSecondaryButtonStyle())
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .background(rowBackground)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            handleTap()
+        }
     }
 
     private var avatar: some View {
+        ZStack(alignment: .topTrailing) {
+            avatarContent
+                .frame(width: 44, height: 44)
+
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+                .offset(x: 2, y: -2)
+        }
+    }
+
+    @ViewBuilder
+    private var avatarContent: some View {
+        if let photoURL = timer.photoURL {
+            AsyncImage(url: photoURL) { phase in
+                switch phase {
+                case let .success(image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    avatarInitials
+                }
+            }
+            .clipShape(Circle())
+        } else {
+            avatarInitials
+        }
+    }
+
+    private var avatarInitials: some View {
         Circle()
-            .fill(avatarAccent.opacity(0.16))
-            .frame(width: 64, height: 64)
+            .fill(statusColor.opacity(0.14))
             .overlay {
                 Text(initials)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(avatarAccent)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(statusColor)
             }
     }
 
@@ -849,20 +972,8 @@ private struct AthleteTimerTile: View {
         return String(compactName.prefix(2)).uppercased()
     }
 
-    private var tileBorder: Color {
-        if isRecoveryCountdown { return .orange }
-        if isRecoveryWaiting { return AppTheme.Palette.success }
-        switch timer.status {
-        case .idle:
-            return AppTheme.Palette.border
-        case .running:
-            return AppTheme.Palette.success
-        case .stopped:
-            return AppTheme.Palette.danger
-        }
-    }
-
-    private var avatarAccent: Color {
+    private var statusColor: Color {
+        if isCompletedWorkoutAthlete { return AppTheme.Palette.textSecondary }
         if isRecoveryCountdown { return .orange }
         if isRecoveryWaiting { return AppTheme.Palette.success }
         switch timer.status {
@@ -875,11 +986,67 @@ private struct AthleteTimerTile: View {
         }
     }
 
-    private var tileBackground: Color {
-        if isRecoveryCountdown { return Color.orange.opacity(0.10) }
-        if isRecoveryWaiting { return AppTheme.Palette.success.opacity(0.10) }
-        if timer.status == .stopped { return AppTheme.Palette.surface }
-        return AppTheme.Palette.elevatedSurface
+    private var statusLabel: String {
+        if isRecoveryCountdown { return "Recovery" }
+        if isRecoveryWaiting { return "Ready" }
+        switch timer.status {
+        case .idle:
+            return "Ready"
+        case .running:
+            return "Running"
+        case .stopped:
+            return "Done"
+        }
+    }
+
+    private var stepSubtitle: String? {
+        if let currentStep, progress?.stepStatus == .active {
+            return currentStep.label
+        }
+        if let progress, progress.stepStatus == .completed {
+            return "\(workSplitCount) split\(workSplitCount == 1 ? "" : "s")"
+        }
+        return nil
+    }
+
+    private var timeValueLabel: String {
+        if isRecoveryCountdown {
+            return formatCountdown(milliseconds: recoveryRemainingMilliseconds)
+        }
+        if isRecoveryWaiting {
+            return "GO"
+        }
+        if timer.status == .stopped, let finalSplit = timer.splits.last(where: \.isFinal) {
+            return formatElapsedTime(milliseconds: finalSplit.elapsedMilliseconds)
+        }
+        if timer.status == .running, let liveCurrentLapMilliseconds {
+            return formatElapsedTime(milliseconds: liveCurrentLapMilliseconds)
+        }
+        if let lapInfo {
+            return formatElapsedTime(milliseconds: lapInfo.lastLapMilliseconds)
+        }
+        return "--"
+    }
+
+    private var timeCaptionLabel: String {
+        if isRecoveryCountdown {
+            return "REST"
+        }
+        if isRecoveryWaiting {
+            return "GO"
+        }
+        if timer.status == .stopped {
+            return "LAST"
+        }
+        if timer.status == .running {
+            return "S\(workSplitCount + 1)"
+        }
+        return "READY"
+    }
+
+    private var timeValueColor: Color {
+        if isCompletedWorkoutAthlete { return AppTheme.Palette.textSecondary }
+        return AppTheme.Palette.textPrimary
     }
 
     private var isRecoveryCountdown: Bool {
@@ -911,10 +1078,38 @@ private struct AthleteTimerTile: View {
         return (workSplitCount, last.elapsedMilliseconds - previousElapsed)
     }
 
-    private var liveLapMilliseconds: Int? {
-        guard timer.status == .running, let lastSplit = timer.splits.last else { return nil }
+    private var liveCurrentLapMilliseconds: Int? {
+        guard timer.status == .running, let startedAt = timer.startedAt else { return nil }
         _ = displayTick
-        return Int(Date().timeIntervalSince(lastSplit.timestamp) * 1000)
+        let lapAnchor = timer.splits.last?.timestamp ?? startedAt
+        return max(0, Int(Date().timeIntervalSince(lapAnchor) * 1000))
+    }
+
+    private var lastSplitText: String? {
+        guard let milliseconds = lapInfo?.lastLapMilliseconds else { return nil }
+        return "Last split \(formatElapsedTime(milliseconds: milliseconds))"
+    }
+
+    private var canUndo: Bool {
+        guard let lastSplit = timer.splits.last else { return false }
+        return !lastSplit.isFinal
+    }
+
+    private var v1RowTimerFont: Font {
+        for name in ["SFMono-Bold", "SF Mono", "Menlo-Bold"] {
+            if let uiFont = UIFont(name: name, size: 20) {
+                return Font(uiFont)
+            }
+        }
+        return .system(size: 20, weight: .bold, design: .monospaced)
+    }
+
+    private var isCompletedWorkoutAthlete: Bool {
+        progress?.stepStatus == .completed
+    }
+
+    private var rowBackground: Color {
+        isCompletedWorkoutAthlete ? AppTheme.Palette.surface : .clear
     }
 
     private func handleTap() {
@@ -931,6 +1126,52 @@ private struct AthleteTimerTile: View {
         if timer.status == .running {
             onSplit()
         }
+    }
+}
+
+private struct TimerCompactSuccessButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AppTheme.Palette.success.opacity(configuration.isPressed ? 0.84 : 1))
+            )
+    }
+}
+
+private struct TimerCompactDangerButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AppTheme.Palette.danger.opacity(configuration.isPressed ? 0.84 : 1))
+            )
+    }
+}
+
+private struct TimerCompactSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(AppTheme.Palette.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(AppTheme.Palette.surface.opacity(configuration.isPressed ? 0.84 : 1))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(AppTheme.Palette.border, lineWidth: 1)
+            )
     }
 }
 

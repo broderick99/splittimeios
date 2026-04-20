@@ -1196,8 +1196,12 @@ struct YouScene: View {
         return "SplitTime Team"
     }
 
+    private var isViewingOwnCoachProfile: Bool {
+        session.user.role == .coach && viewModel.selectedViewerUserID == nil
+    }
+
     private var canEditOwnProfilePhoto: Bool {
-        session.user.role == .athlete
+        session.user.role == .athlete || isViewingOwnCoachProfile
     }
 
     private var canShowCoachProfileEditButton: Bool {
@@ -1223,7 +1227,15 @@ struct YouScene: View {
     }
 
     private var profilePhotoURL: URL? {
-        profileAthlete?.photoURL
+        if let photoURL = profileAthlete?.photoURL {
+            return photoURL
+        }
+
+        if isViewingOwnCoachProfile {
+            return persistedProfilePhotoURL(for: session.user.id)
+        }
+
+        return nil
     }
 
     private var profileAthlete: Athlete? {
@@ -1368,7 +1380,7 @@ struct YouScene: View {
     }
 
     private func updateOwnProfilePhoto(from item: PhotosPickerItem) async {
-        guard session.user.role == .athlete else { return }
+        guard canEditOwnProfilePhoto else { return }
         guard !isSavingProfilePhoto else { return }
         isSavingProfilePhoto = true
         defer { isSavingProfilePhoto = false }
@@ -1379,9 +1391,13 @@ struct YouScene: View {
                 throw APIError.decoding("Could not read selected photo.")
             }
 
-            let athlete = try await ensureSelfAthleteProfileExists()
             let fileURL = try persistProfilePhoto(photoData, remoteUserID: session.user.id)
-            await localStore.updateAthlete(athleteID: athlete.id, photoURL: fileURL)
+            if session.user.role == .athlete {
+                let athlete = try await ensureSelfAthleteProfileExists()
+                await localStore.updateAthlete(athleteID: athlete.id, photoURL: fileURL)
+            } else if let athlete = localStore.athletes.first(where: { $0.remoteUserID == session.user.id }) {
+                await localStore.updateAthlete(athleteID: athlete.id, photoURL: fileURL)
+            }
             profilePhotoErrorMessage = nil
         } catch {
             profilePhotoErrorMessage = error.localizedDescription
@@ -1458,22 +1474,34 @@ struct YouScene: View {
 
     private func persistProfilePhoto(_ photoData: Data, remoteUserID: String) throws -> URL {
         let fileManager = FileManager.default
+        let fileURL = profilePhotoFileURL(for: remoteUserID)
+        let directory = fileURL.deletingLastPathComponent()
+
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        try photoData.write(to: fileURL, options: [.atomic])
+        return fileURL
+    }
+
+    private func persistedProfilePhotoURL(for remoteUserID: String) -> URL? {
+        let fileURL = profilePhotoFileURL(for: remoteUserID)
+        return FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : nil
+    }
+
+    private func profilePhotoFileURL(for remoteUserID: String) -> URL {
+        let fileManager = FileManager.default
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         let directory = appSupport
             .appendingPathComponent("SplitTimeTeamNative", isDirectory: true)
             .appendingPathComponent("profile-photos", isDirectory: true)
 
-        if !fileManager.fileExists(atPath: directory.path) {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-
         let safeIdentifier = remoteUserID
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "_")
-        let fileURL = directory.appendingPathComponent("\(safeIdentifier).jpg")
-        try photoData.write(to: fileURL, options: [.atomic])
-        return fileURL
+        return directory.appendingPathComponent("\(safeIdentifier).jpg")
     }
 
     private func normalizedProfilePhotoData(from data: Data) -> Data? {
