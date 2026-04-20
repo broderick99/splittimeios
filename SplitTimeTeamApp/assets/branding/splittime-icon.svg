@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6" />
+      <stop offset="52%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#1D4ED8" />
+    </linearGradient>
+    <path
+      id="lane-path"
+      d="M760 286 H434
+         C338 286 290 340 290 420
+         C290 500 338 540 434 540
+         H592
+         C688 540 736 594 736 674
+         C736 754 688 808 592 808
+         H264" />
+  </defs>
+
+  <rect x="96" y="96" width="832" height="832" rx="170" fill="url(#bg)" />
+
+  <g fill="none" stroke="#FFFFFF" stroke-width="40" stroke-linecap="square" stroke-linejoin="round">
+    <use href="#lane-path" transform="translate(0 -52)" />
+    <use href="#lane-path" />
+    <use href="#lane-path" transform="translate(0 52)" />
+  </g>
+</svg>

@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "SplitTime",
+    "slug": "SplitTime",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "splittime",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.cooperostler.splittime",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "SplitTime needs access to your camera to take athlete profile pictures.",
+        "LSApplicationQueriesSchemes": [
+          "comgooglemaps"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.splittime.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#2563EB",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF"
+        }
+      ],
+      "expo-sqlite",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SplitTime needs access to your photos to add athlete profile pictures.",
+          "cameraPermission": "SplitTime needs access to your camera to take athlete profile pictures."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "apiBaseUrl": "https://api.splittime.app",
+      "router": {},
+      "eas": {
+        "projectId": "e67cf506-5f12-4cc4-b246-8075fd194615"
+      }
+    }
+  }
+}

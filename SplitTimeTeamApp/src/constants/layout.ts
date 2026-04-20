@@ -1,0 +1,17 @@
+export const Layout = {
+  buttonMinHeight: 48,
+  buttonLarge: 56,
+  borderRadius: 12,
+  borderRadiusSmall: 8,
+  padding: 16,
+  paddingSmall: 8,
+  paddingLarge: 24,
+  iconSize: 24,
+  iconSizeSmall: 18,
+  fontSize: 16,
+  fontSizeSmall: 13,
+  fontSizeLarge: 20,
+  fontSizeTitle: 28,
+  timerFontSize: 32,
+  timerFontSizeLarge: 48,
+};

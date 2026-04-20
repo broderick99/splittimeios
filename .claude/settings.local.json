@@ -10,7 +10,8 @@
       "Bash(xcodebuild:*)",
       "Bash(xcrun simctl list runtimes:*)",
       "Bash(ls:*)",
-      "Bash(npx expo export --dump-sourcemap)"
+      "Bash(npx expo export --dump-sourcemap)",
+      "WebSearch"
     ]
   }
 }

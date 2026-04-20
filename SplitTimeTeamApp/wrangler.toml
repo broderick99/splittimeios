@@ -1,0 +1,9 @@
+name = "splitteam-api-dev"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-04-17"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "splitteam-dev"
+database_id = "529dbe75-361a-4966-a0f9-5bcd24131a22"
