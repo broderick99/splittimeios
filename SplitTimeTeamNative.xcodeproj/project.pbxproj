@@ -1,0 +1,557 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		074981257AD5E129E21C5026 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F6D25597DC43AE2BDA806C /* RootView.swift */; };
+		08A34A5C6E7F8091A2B3C4D5 /* splash-logo.png in Resources */ = {isa = PBXBuildFile; fileRef = 19B2C3D4E5F60718293A4B5C /* splash-logo.png */; };
+		0A1B2C3D4E5F60718293A4B5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B2C3D4E5F60718293A4B5C6 /* Assets.xcassets */; };
+		0B48C00C1EB819759F77FEB6 /* LocalDataRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F004A34F0F38C8BCDD7AFB /* LocalDataRepository.swift */; };
+		130B8EAEF8B3CFE1653DAD4B /* SplitTimeTeamNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F833D98CA5E174E5623ACF8 /* SplitTimeTeamNativeApp.swift */; };
+		164AC68C2B5E6850972F84DC /* ScheduleUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD89B0F8F2B680FDAA349FE1 /* ScheduleUtilities.swift */; };
+		17EA3671A6EB40CAE2EB5519 /* TimerScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6104C111BA57D94F8CFEFC25 /* TimerScene.swift */; };
+		1F93C1087AE46AA5CE20F5DD /* WorkoutUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93952DC87DF70B518EF94CA6 /* WorkoutUtilities.swift */; };
+		2701CA65731AF8469DC78FFA /* ScheduleScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 063EAE1BA35F9C2C906C7713 /* ScheduleScene.swift */; };
+		393E380796527F65935C1FE6 /* ServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = E01C5BE50EC9162984807C22 /* ServiceProtocols.swift */; };
+		61A1C964D3874B8750C53AB2 /* LocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EF400FF9E8B68EDE699F7E5 /* LocalStore.swift */; };
+		65546AA0ADE8057E8FB9E2A9 /* TopTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 221BCDAA0A861759AE409257 /* TopTabBar.swift */; };
+		772F3B7FC2DB164D484522B8 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A5FF11F86E2DE3C48800510 /* SessionStore.swift */; };
+		7C542FC199A39389378CF977 /* WorkoutsScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D927706E5C52F74C10F77F5 /* WorkoutsScene.swift */; };
+		8E30DD6BEDAC9BBBB71F3299 /* LiveServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A38ED3A33D10E636A8080BE /* LiveServices.swift */; };
+		912A7C0A13918B715C9C576A /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D73089E2FEE233FF4B0B9C4 /* AppTheme.swift */; };
+		94F8E8826A8D64373F6B69C9 /* ScheduleEventEditorScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667B707C11885C1319659A53 /* ScheduleEventEditorScene.swift */; };
+		A66EF4E6F921ABD4529DDE8A /* WorkoutBuilderUIKitList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5536A9C131F9453BAA07D9F0 /* WorkoutBuilderUIKitList.swift */; };
+		A76042C57384C8B5F77D9026 /* DomainModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C98E231FADE85C92EE6C969 /* DomainModels.swift */; };
+		B2850BF7836D2068A0FC73A2 /* TeamScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47C3AA8DF2DF33D5ED6698C0 /* TeamScene.swift */; };
+		C23C9F0D9BBEC945515F855B /* YouScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FB45E8F777B371CD0E99313 /* YouScene.swift */; };
+		C55747FDF5A61B9CBDF2843D /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D3E6E8AFF7350341E5CEC6 /* AppEnvironment.swift */; };
+		D53B98BB9EAEC8B9CC570EB1 /* TimerRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58E93ECD96938DF52F48E75 /* TimerRuntimeStore.swift */; };
+		EACE942EFED6E14FC2B0F744 /* AuthScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD4AF87676D99AE6D4A304E /* AuthScene.swift */; };
+		F47803D1E5C8B6F3671B3197 /* TemplateEditorScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DDE0AD4E124FC1B48BBDE3E /* TemplateEditorScene.swift */; };
+		F581605567FD940EFA6F8192 /* FloatingAddButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E696FE27402C3BB3B6EFD71 /* FloatingAddButton.swift */; };
+		FCCDC4B8A24F47283246BA8F /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 532F7954B0186BB341A2E9D1 /* APIClient.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		063EAE1BA35F9C2C906C7713 /* ScheduleScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleScene.swift; sourceTree = "<group>"; };
+		19B2C3D4E5F60718293A4B5C /* splash-logo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "splash-logo.png"; sourceTree = "<group>"; };
+		1A38ED3A33D10E636A8080BE /* LiveServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveServices.swift; sourceTree = "<group>"; };
+		1B2C3D4E5F60718293A4B5C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		221BCDAA0A861759AE409257 /* TopTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopTabBar.swift; sourceTree = "<group>"; };
+		2EF400FF9E8B68EDE699F7E5 /* LocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStore.swift; sourceTree = "<group>"; };
+		2F833D98CA5E174E5623ACF8 /* SplitTimeTeamNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTimeTeamNativeApp.swift; sourceTree = "<group>"; };
+		3699A7323F43C9F9C7146F2A /* SplitTimeTeamNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SplitTimeTeamNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		3CD4AF87676D99AE6D4A304E /* AuthScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthScene.swift; sourceTree = "<group>"; };
+		47C3AA8DF2DF33D5ED6698C0 /* TeamScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamScene.swift; sourceTree = "<group>"; };
+		532F7954B0186BB341A2E9D1 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		5536A9C131F9453BAA07D9F0 /* WorkoutBuilderUIKitList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutBuilderUIKitList.swift; sourceTree = "<group>"; };
+		5D73089E2FEE233FF4B0B9C4 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		5D927706E5C52F74C10F77F5 /* WorkoutsScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutsScene.swift; sourceTree = "<group>"; };
+		5E696FE27402C3BB3B6EFD71 /* FloatingAddButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingAddButton.swift; sourceTree = "<group>"; };
+		5FB45E8F777B371CD0E99313 /* YouScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouScene.swift; sourceTree = "<group>"; };
+		6104C111BA57D94F8CFEFC25 /* TimerScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimerScene.swift; sourceTree = "<group>"; };
+		667B707C11885C1319659A53 /* ScheduleEventEditorScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEventEditorScene.swift; sourceTree = "<group>"; };
+		6A5FF11F86E2DE3C48800510 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		7C98E231FADE85C92EE6C969 /* DomainModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainModels.swift; sourceTree = "<group>"; };
+		90F6D25597DC43AE2BDA806C /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		93952DC87DF70B518EF94CA6 /* WorkoutUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutUtilities.swift; sourceTree = "<group>"; };
+		9DDE0AD4E124FC1B48BBDE3E /* TemplateEditorScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateEditorScene.swift; sourceTree = "<group>"; };
+		A58E93ECD96938DF52F48E75 /* TimerRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimerRuntimeStore.swift; sourceTree = "<group>"; };
+		CD89B0F8F2B680FDAA349FE1 /* ScheduleUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleUtilities.swift; sourceTree = "<group>"; };
+		E01C5BE50EC9162984807C22 /* ServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceProtocols.swift; sourceTree = "<group>"; };
+		E3F004A34F0F38C8BCDD7AFB /* LocalDataRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataRepository.swift; sourceTree = "<group>"; };
+		E76562562F90C6A500CCB65C /* SplitTimeTeamNative.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = SplitTimeTeamNative.xcodeproj; sourceTree = SOURCE_ROOT; };
+		F1D3E6E8AFF7350341E5CEC6 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		12324CA0A8161E8D18924934 = {
+			isa = PBXGroup;
+			children = (
+				5B5830A81081EBEE22118F30 /* App */,
+				25EF20F2AFA6D5632ED3F2F6 /* Core */,
+				80A344F348CCE0972B26BFAB /* Features */,
+				F0BB45A4B05B127C614B8C50 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1CACA09DCF0937F8C91CC282 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				7C98E231FADE85C92EE6C969 /* DomainModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		25EF20F2AFA6D5632ED3F2F6 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				EA21A1EE55A3681416CD75AA /* DesignSystem */,
+				1CACA09DCF0937F8C91CC282 /* Models */,
+				4DEA13E2E0FE6EF718AD6410 /* Networking */,
+				E8ED991CB20C234078822DB8 /* Persistence */,
+				97FBABE3A6312900150038F5 /* State */,
+				EF1399CAFF24D2D433DF556C /* Utilities */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		421D917A7B7C1E442B0D9185 /* Workouts */ = {
+			isa = PBXGroup;
+			children = (
+				9DDE0AD4E124FC1B48BBDE3E /* TemplateEditorScene.swift */,
+				5536A9C131F9453BAA07D9F0 /* WorkoutBuilderUIKitList.swift */,
+				5D927706E5C52F74C10F77F5 /* WorkoutsScene.swift */,
+			);
+			path = Workouts;
+			sourceTree = "<group>";
+		};
+		4DEA13E2E0FE6EF718AD6410 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				532F7954B0186BB341A2E9D1 /* APIClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		5B5830A81081EBEE22118F30 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F1D3E6E8AFF7350341E5CEC6 /* AppEnvironment.swift */,
+				90F6D25597DC43AE2BDA806C /* RootView.swift */,
+				2F833D98CA5E174E5623ACF8 /* SplitTimeTeamNativeApp.swift */,
+				1B2C3D4E5F60718293A4B5C6 /* Assets.xcassets */,
+				19B2C3D4E5F60718293A4B5C /* splash-logo.png */,
+				E76562562F90C6A500CCB65C /* SplitTimeTeamNative.xcodeproj */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		80A344F348CCE0972B26BFAB /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				A54C2ECF5F25E1EF524960DD /* Auth */,
+				E80B1E16825ADC85C70E8F33 /* Schedule */,
+				97DAD1F706D0EE6C8F05DA90 /* Team */,
+				E49988B7987B75F3206FD5CF /* Timer */,
+				421D917A7B7C1E442B0D9185 /* Workouts */,
+				FE3672679024B3A358682C8B /* You */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		97DAD1F706D0EE6C8F05DA90 /* Team */ = {
+			isa = PBXGroup;
+			children = (
+				47C3AA8DF2DF33D5ED6698C0 /* TeamScene.swift */,
+			);
+			path = Team;
+			sourceTree = "<group>";
+		};
+		97FBABE3A6312900150038F5 /* State */ = {
+			isa = PBXGroup;
+			children = (
+				2EF400FF9E8B68EDE699F7E5 /* LocalStore.swift */,
+				A58E93ECD96938DF52F48E75 /* TimerRuntimeStore.swift */,
+			);
+			path = State;
+			sourceTree = "<group>";
+		};
+		A54C2ECF5F25E1EF524960DD /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				3CD4AF87676D99AE6D4A304E /* AuthScene.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		E49988B7987B75F3206FD5CF /* Timer */ = {
+			isa = PBXGroup;
+			children = (
+				6104C111BA57D94F8CFEFC25 /* TimerScene.swift */,
+			);
+			path = Timer;
+			sourceTree = "<group>";
+		};
+		E796D6E52F9428A900609117 /* Products */ = {
+			isa = PBXGroup;
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E80B1E16825ADC85C70E8F33 /* Schedule */ = {
+			isa = PBXGroup;
+			children = (
+				667B707C11885C1319659A53 /* ScheduleEventEditorScene.swift */,
+				063EAE1BA35F9C2C906C7713 /* ScheduleScene.swift */,
+			);
+			path = Schedule;
+			sourceTree = "<group>";
+		};
+		E8ED991CB20C234078822DB8 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				E3F004A34F0F38C8BCDD7AFB /* LocalDataRepository.swift */,
+				6A5FF11F86E2DE3C48800510 /* SessionStore.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		EA21A1EE55A3681416CD75AA /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				5D73089E2FEE233FF4B0B9C4 /* AppTheme.swift */,
+				5E696FE27402C3BB3B6EFD71 /* FloatingAddButton.swift */,
+				221BCDAA0A861759AE409257 /* TopTabBar.swift */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		EF1399CAFF24D2D433DF556C /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				CD89B0F8F2B680FDAA349FE1 /* ScheduleUtilities.swift */,
+				93952DC87DF70B518EF94CA6 /* WorkoutUtilities.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		F0BB45A4B05B127C614B8C50 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3699A7323F43C9F9C7146F2A /* SplitTimeTeamNative.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F61EC9D5D7362A549DBE26F8 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				1A38ED3A33D10E636A8080BE /* LiveServices.swift */,
+				E01C5BE50EC9162984807C22 /* ServiceProtocols.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		FE3672679024B3A358682C8B /* You */ = {
+			isa = PBXGroup;
+			children = (
+				5FB45E8F777B371CD0E99313 /* YouScene.swift */,
+				F61EC9D5D7362A549DBE26F8 /* Services */,
+			);
+			path = You;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A8C2E39CD26BD69B80D92AA8 /* SplitTimeTeamNative */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E7D64F306230F80AC45BB76A /* Build configuration list for PBXNativeTarget "SplitTimeTeamNative" */;
+			buildPhases = (
+				90200C4BB0BCE160E19D81F6 /* Sources */,
+				2A3B4C5D6E7F8091A2B3C4D5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SplitTimeTeamNative;
+			packageProductDependencies = (
+			);
+			productName = SplitTimeTeamNative;
+			productReference = 3699A7323F43C9F9C7146F2A /* SplitTimeTeamNative.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4CF177627E5F211AC3ADED2A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					A8C2E39CD26BD69B80D92AA8 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = D7723C1350FF029A8D852405 /* Build configuration list for PBXProject "SplitTimeTeamNative" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 12324CA0A8161E8D18924934;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = F0BB45A4B05B127C614B8C50 /* Products */;
+			projectDirPath = "";
+			projectReferences = (
+				{
+					ProductGroup = E796D6E52F9428A900609117 /* Products */;
+					ProjectRef = E76562562F90C6A500CCB65C /* SplitTimeTeamNative.xcodeproj */;
+				},
+			);
+			projectRoot = "";
+			targets = (
+				A8C2E39CD26BD69B80D92AA8 /* SplitTimeTeamNative */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		2A3B4C5D6E7F8091A2B3C4D5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A1B2C3D4E5F60718293A4B5 /* Assets.xcassets in Resources */,
+				08A34A5C6E7F8091A2B3C4D5 /* splash-logo.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		90200C4BB0BCE160E19D81F6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FCCDC4B8A24F47283246BA8F /* APIClient.swift in Sources */,
+				C55747FDF5A61B9CBDF2843D /* AppEnvironment.swift in Sources */,
+				912A7C0A13918B715C9C576A /* AppTheme.swift in Sources */,
+				EACE942EFED6E14FC2B0F744 /* AuthScene.swift in Sources */,
+				A76042C57384C8B5F77D9026 /* DomainModels.swift in Sources */,
+				F581605567FD940EFA6F8192 /* FloatingAddButton.swift in Sources */,
+				8E30DD6BEDAC9BBBB71F3299 /* LiveServices.swift in Sources */,
+				0B48C00C1EB819759F77FEB6 /* LocalDataRepository.swift in Sources */,
+				61A1C964D3874B8750C53AB2 /* LocalStore.swift in Sources */,
+				074981257AD5E129E21C5026 /* RootView.swift in Sources */,
+				94F8E8826A8D64373F6B69C9 /* ScheduleEventEditorScene.swift in Sources */,
+				2701CA65731AF8469DC78FFA /* ScheduleScene.swift in Sources */,
+				164AC68C2B5E6850972F84DC /* ScheduleUtilities.swift in Sources */,
+				393E380796527F65935C1FE6 /* ServiceProtocols.swift in Sources */,
+				772F3B7FC2DB164D484522B8 /* SessionStore.swift in Sources */,
+				130B8EAEF8B3CFE1653DAD4B /* SplitTimeTeamNativeApp.swift in Sources */,
+				B2850BF7836D2068A0FC73A2 /* TeamScene.swift in Sources */,
+				F47803D1E5C8B6F3671B3197 /* TemplateEditorScene.swift in Sources */,
+				D53B98BB9EAEC8B9CC570EB1 /* TimerRuntimeStore.swift in Sources */,
+				17EA3671A6EB40CAE2EB5519 /* TimerScene.swift in Sources */,
+				65546AA0ADE8057E8FB9E2A9 /* TopTabBar.swift in Sources */,
+				A66EF4E6F921ABD4529DDE8A /* WorkoutBuilderUIKitList.swift in Sources */,
+				1F93C1087AE46AA5CE20F5DD /* WorkoutUtilities.swift in Sources */,
+				7C542FC199A39389378CF977 /* WorkoutsScene.swift in Sources */,
+				C23C9F0D9BBEC945515F855B /* YouScene.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		096E2A6593DA613998395DAE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AB305EB59B7F1DA9EB240D10 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		B0FC5CCCBAB17CB628EE8B2A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 66HQ6S4L86;
+					GENERATE_INFOPLIST_FILE = YES;
+					INFOPLIST_KEY_API_BASE_URL = "https://splitteam-api-dev.broderick99.workers.dev";
+					INFOPLIST_KEY_CFBundleDisplayName = "SplitTime Team";
+					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
+					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = "com.cooperostler.SplitTimeTeamNative.auth";
+					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = splittimeteamnative;
+					INFOPLIST_KEY_NSCameraUsageDescription = "SplitTime Team uses the camera so you can share photos in team chat.";
+					INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SplitTime Team uses your photo library so you can share photos in team chat.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cooperostler.SplitTimeTeamNative;
+				PRODUCT_NAME = SplitTimeTeamNative;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E044BF7F8251CCE833EA825D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 66HQ6S4L86;
+					GENERATE_INFOPLIST_FILE = YES;
+					INFOPLIST_KEY_API_BASE_URL = "https://splitteam-api-dev.broderick99.workers.dev";
+					INFOPLIST_KEY_CFBundleDisplayName = "SplitTime Team";
+					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
+					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = "com.cooperostler.SplitTimeTeamNative.auth";
+					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = splittimeteamnative;
+					INFOPLIST_KEY_NSCameraUsageDescription = "SplitTime Team uses the camera so you can share photos in team chat.";
+					INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SplitTime Team uses your photo library so you can share photos in team chat.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.cooperostler.SplitTimeTeamNative;
+				PRODUCT_NAME = SplitTimeTeamNative;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		D7723C1350FF029A8D852405 /* Build configuration list for PBXProject "SplitTimeTeamNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				096E2A6593DA613998395DAE /* Debug */,
+				AB305EB59B7F1DA9EB240D10 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E7D64F306230F80AC45BB76A /* Build configuration list for PBXNativeTarget "SplitTimeTeamNative" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B0FC5CCCBAB17CB628EE8B2A /* Debug */,
+				E044BF7F8251CCE833EA825D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 4CF177627E5F211AC3ADED2A /* Project object */;
+}

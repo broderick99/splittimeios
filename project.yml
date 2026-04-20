@@ -1,0 +1,44 @@
+name: SplitTimeTeamNative
+
+options:
+  minimumXcodeGenVersion: 2.38.0
+  createIntermediateGroups: true
+
+targets:
+  SplitTimeTeamNative:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - App
+      - Core
+      - Features
+      - Services
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cooperostler.SplitTimeTeamNative
+        PRODUCT_NAME: SplitTimeTeamNative
+        SWIFT_VERSION: 6.0
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: SplitTime Team
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_API_BASE_URL: "https://splitteam-api-dev.broderick99.workers.dev"
+        INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole: "Editor"
+        INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName: "com.cooperostler.SplitTimeTeamNative.auth"
+        INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0: "splittimeteamnative"
+        INFOPLIST_KEY_NSCameraUsageDescription: "SplitTime Team uses the camera so you can share photos in team chat."
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "SplitTime Team uses your photo library so you can share photos in team chat."
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: 1
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+schemes:
+  SplitTimeTeamNative:
+    build:
+      targets:
+        SplitTimeTeamNative: all
+    run:
+      config: Debug
+    archive:
+      config: Release
