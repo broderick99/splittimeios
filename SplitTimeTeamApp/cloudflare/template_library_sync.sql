@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS team_template_steps (
   distance_value REAL,
   distance_unit TEXT,
   duration_ms INTEGER,
+  splits_per_step INTEGER NOT NULL DEFAULT 1,
   label TEXT NOT NULL DEFAULT '',
   repeat_group_id TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

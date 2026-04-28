@@ -21,8 +21,20 @@ final class ScheduleViewModel: ObservableObject {
             snapshot = try await scheduleService.fetchSchedule()
             errorMessage = nil
         } catch {
+            if isCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 }
 
@@ -32,6 +44,8 @@ struct ScheduleScene: View {
     private let scheduleService: any ScheduleServiceProtocol
     @State private var showNewEvent = false
     @State private var activeFilter: ScheduleFilter = .all
+    @State private var shouldAutoScrollToToday = true
+    private let todayAnchorID = "schedule-today-anchor"
 
     init(role: UserRole, scheduleService: any ScheduleServiceProtocol) {
         self.role = role
@@ -41,89 +55,119 @@ struct ScheduleScene: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let errorMessage = viewModel.errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(AppTheme.Palette.danger)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .appCard()
-                    }
+            if isInitialLoading {
+                VStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if let errorMessage = viewModel.errorMessage {
+                                Text(errorMessage)
+                                    .font(.footnote)
+                                    .foregroundStyle(AppTheme.Palette.danger)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .appCard()
+                            }
 
-                    ScheduleSummaryBlock(
-                        role: role,
-                        activeFilter: $activeFilter,
-                        nextOccurrence: occurrences.first,
-                        recurringEventCount: recurringEventCount
-                    )
-
-                    if occurrences.isEmpty && !viewModel.isLoading {
-                        ContentUnavailableView(
-                            "No Schedule Yet",
-                            systemImage: "calendar.badge.clock",
-                            description: Text(
-                                role == .coach
-                                    ? "Tap the plus button to add a practice, race, or recurring team event."
-                                    : "Your schedule will appear here once events are synced from the coach account."
+                            ScheduleSummaryBlock(
+                                role: role,
+                                activeFilter: $activeFilter,
+                                nextOccurrence: occurrences.first,
+                                recurringEventCount: recurringEventCount
                             )
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 36)
-                    } else {
-                        ForEach(groupedOccurrences) { month in
-                            VStack(alignment: .leading, spacing: 14) {
-                                Text(month.label)
-                                    .font(.headline.weight(.heavy))
-                                    .foregroundStyle(AppTheme.Palette.textPrimary)
 
-                                ForEach(month.weeks) { week in
-                                    VStack(alignment: .leading, spacing: 10) {
-                                        Text(week.label)
-                                            .font(.subheadline.weight(.heavy))
-                                            .foregroundStyle(AppTheme.Palette.textSecondary)
+                            if occurrences.isEmpty && !viewModel.isLoading {
+                                ContentUnavailableView(
+                                    "No Schedule Yet",
+                                    systemImage: "calendar.badge.clock",
+                                    description: Text(
+                                        role == .coach
+                                            ? "Tap the plus button to add a practice, race, or recurring team event."
+                                            : "Your schedule will appear here once events are synced from the coach account."
+                                    )
+                                )
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 36)
+                            } else {
+                                ForEach(groupedOccurrences) { month in
+                                    VStack(alignment: .leading, spacing: 14) {
+                                        Text(month.label)
+                                            .font(.headline.weight(.heavy))
+                                            .foregroundStyle(AppTheme.Palette.textPrimary)
 
-                                        VStack(spacing: 0) {
-                                            ForEach(Array(week.occurrences.enumerated()), id: \.element.id) { index, occurrence in
-                                                NavigationLink {
-                                                    if let event = eventByID[occurrence.eventID] {
-                                                        ScheduleEventDetailView(
-                                                            event: event,
-                                                            occurrence: occurrence,
-                                                            role: role,
-                                                            scheduleService: scheduleService
-                                                        ) {
-                                                            Task {
-                                                                await viewModel.refresh()
-                                                            }
+                                        ForEach(month.weeks) { week in
+                                            VStack(alignment: .leading, spacing: 10) {
+                                                Text(week.label)
+                                                    .font(.subheadline.weight(.heavy))
+                                                    .foregroundStyle(AppTheme.Palette.textSecondary)
+
+                                                VStack(spacing: 0) {
+                                                    ForEach(Array(week.occurrences.enumerated()), id: \.element.id) { index, occurrence in
+                                                        if occurrence.id == firstUpcomingOccurrenceID {
+                                                            TodayDivider()
+                                                                .padding(.vertical, 8)
+                                                                .id(todayAnchorID)
                                                         }
+
+                                                        NavigationLink {
+                                                            if let event = eventByID[occurrence.eventID] {
+                                                                ScheduleEventDetailView(
+                                                                    event: event,
+                                                                    occurrence: occurrence,
+                                                                    role: role,
+                                                                    scheduleService: scheduleService
+                                                                ) {
+                                                                    Task {
+                                                                        await viewModel.refresh()
+                                                                    }
+                                                                }
+                                                            }
+                                                        } label: {
+                                                            ScheduleEventRow(
+                                                                occurrence: occurrence,
+                                                                isPast: isPastOccurrence(occurrence),
+                                                                showsDivider: index < week.occurrences.count - 1
+                                                            )
+                                                        }
+                                                        .buttonStyle(.plain)
                                                     }
-                                                } label: {
-                                                    ScheduleEventRow(
-                                                        occurrence: occurrence,
-                                                        showsDivider: index < week.occurrences.count - 1
-                                                    )
                                                 }
-                                                .buttonStyle(.plain)
                                             }
+                                            .appCard()
                                         }
-                                        .appCard()
                                     }
                                 }
                             }
                         }
+                        .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                        .padding(.top, 10)
+                        .padding(.bottom, 110)
+                    }
+                    .background(AppTheme.Palette.background)
+                    .refreshable {
+                        await viewModel.refresh()
+                        shouldAutoScrollToToday = true
+                    }
+                    .onAppear {
+                        shouldAutoScrollToToday = true
+                        scrollToTodayIfNeeded(using: proxy, animated: false)
+                    }
+                    .onChange(of: firstUpcomingOccurrenceID) { _, _ in
+                        scrollToTodayIfNeeded(using: proxy, animated: false)
+                    }
+                    .onChange(of: activeFilter) { _, _ in
+                        shouldAutoScrollToToday = true
+                        scrollToTodayIfNeeded(using: proxy, animated: false)
                     }
                 }
-                .padding(.horizontal, AppTheme.Metrics.screenPadding)
-                .padding(.top, 10)
-                .padding(.bottom, 110)
-            }
-            .background(AppTheme.Palette.background)
-            .refreshable {
-                await viewModel.refresh()
             }
 
-            if role == .coach {
+            if role == .coach && !isInitialLoading {
                 FloatingAddButton {
                     showNewEvent = true
                 }
@@ -149,21 +193,25 @@ struct ScheduleScene: View {
         }
     }
 
+    private var isInitialLoading: Bool {
+        viewModel.isLoading && viewModel.snapshot.events.isEmpty && viewModel.errorMessage == nil
+    }
+
     private var topNavigationBar: some View {
-        HStack(spacing: 12) {
-            Color.clear
-                .frame(width: 34, height: 34)
-
-            Spacer(minLength: 8)
-
+        ZStack {
             Text("Schedule")
-                .font(.headline.weight(.semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(AppTheme.Palette.textPrimary)
 
-            Spacer(minLength: 8)
+            HStack {
+                Color.clear
+                    .frame(width: 34, height: 34)
 
-            Color.clear
-                .frame(width: 34, height: 34)
+                Spacer(minLength: 0)
+
+                Color.clear
+                    .frame(width: 34, height: 34)
+            }
         }
         .padding(.horizontal, AppTheme.Metrics.screenPadding)
         .padding(.top, 4)
@@ -190,9 +238,15 @@ struct ScheduleScene: View {
     }
 
     private var occurrences: [ScheduleOccurrence] {
-        buildUpcomingOccurrences(
+        let now = Date()
+        let lookbackStart = Calendar.current.date(byAdding: .day, value: -45, to: now) ?? now
+
+        return buildUpcomingOccurrences(
             events: filteredEvents,
-            overrides: viewModel.snapshot.overrides
+            overrides: viewModel.snapshot.overrides,
+            from: lookbackStart,
+            daysAhead: 180,
+            maxCount: 260
         )
     }
 
@@ -200,14 +254,59 @@ struct ScheduleScene: View {
         viewModel.snapshot.events.filter(\.isRecurring).count
     }
 
+    private var firstUpcomingOccurrenceID: String? {
+        occurrences.first(where: { !isPastOccurrence($0) })?.id
+    }
+
+    private func scrollToTodayIfNeeded(using proxy: ScrollViewProxy, animated: Bool) {
+        guard shouldAutoScrollToToday else { return }
+        guard firstUpcomingOccurrenceID != nil else { return }
+
+        shouldAutoScrollToToday = false
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(todayAnchorID, anchor: .center)
+                }
+            } else {
+                proxy.scrollTo(todayAnchorID, anchor: .center)
+            }
+        }
+    }
+
+    private func isPastOccurrence(_ occurrence: ScheduleOccurrence, now: Date = Date()) -> Bool {
+        if let endsAt = occurrence.endsAt {
+            return endsAt < now
+        }
+        return occurrence.startsAt < now
+    }
+
     private var groupedOccurrences: [ScheduleMonthGroup] {
-        var monthGroups: [ScheduleMonthGroup] = []
+        // Build chronological week buckets first so month headers only begin on week boundaries.
+        var weekGroups: [ScheduleWeekGroup] = []
 
         for occurrence in occurrences {
-            let monthLabel = formatScheduleMonthYear(occurrence.startsAt)
             let weekStart = startOfScheduleWeek(for: occurrence.startsAt)
-            let weekID = "\(monthLabel)-\(weekStart.timeIntervalSince1970)"
+            let weekID = "\(weekStart.timeIntervalSince1970)"
             let weekLabel = formatScheduleWeekLabel(weekStart)
+
+            if weekGroups.last?.id != weekID {
+                weekGroups.append(
+                    ScheduleWeekGroup(
+                        id: weekID,
+                        weekStart: weekStart,
+                        label: weekLabel,
+                        occurrences: []
+                    )
+                )
+            }
+
+            weekGroups[weekGroups.count - 1].occurrences.append(occurrence)
+        }
+
+        var monthGroups: [ScheduleMonthGroup] = []
+        for week in weekGroups {
+            let monthLabel = formatScheduleMonthYear(week.weekStart)
 
             if monthGroups.last?.id != monthLabel {
                 monthGroups.append(
@@ -219,19 +318,7 @@ struct ScheduleScene: View {
                 )
             }
 
-            if monthGroups[monthGroups.count - 1].weeks.last?.id != weekID {
-                monthGroups[monthGroups.count - 1].weeks.append(
-                    ScheduleWeekGroup(
-                        id: weekID,
-                        label: weekLabel,
-                        occurrences: []
-                    )
-                )
-            }
-
-            monthGroups[monthGroups.count - 1].weeks[monthGroups[monthGroups.count - 1].weeks.count - 1]
-                .occurrences
-                .append(occurrence)
+            monthGroups[monthGroups.count - 1].weeks.append(week)
         }
 
         return monthGroups
@@ -265,6 +352,7 @@ private struct ScheduleMonthGroup: Identifiable {
 
 private struct ScheduleWeekGroup: Identifiable {
     let id: String
+    let weekStart: Date
     let label: String
     var occurrences: [ScheduleOccurrence]
 }
@@ -346,6 +434,7 @@ private struct ScheduleSummaryBlock: View {
 
 private struct ScheduleEventRow: View {
     let occurrence: ScheduleOccurrence
+    let isPast: Bool
     let showsDivider: Bool
 
     var body: some View {
@@ -410,6 +499,7 @@ private struct ScheduleEventRow: View {
                     .padding(.leading, 72)
             }
         }
+        .opacity(isPast ? 0.48 : 1)
     }
 
     private var dayNumber: String {
@@ -426,6 +516,26 @@ private struct ScheduleEventRow: View {
         }
 
         return occurrence.startsAt.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+private struct TodayDivider: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(AppTheme.Palette.border)
+                .frame(height: 1)
+
+            Text("Today")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(AppTheme.Palette.textSecondary)
+                .textCase(.uppercase)
+                .fixedSize()
+
+            Rectangle()
+                .fill(AppTheme.Palette.border)
+                .frame(height: 1)
+        }
     }
 }
 

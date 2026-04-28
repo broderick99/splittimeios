@@ -42,6 +42,18 @@ ON team_athletes(team_id, name ASC);
 CREATE INDEX IF NOT EXISTS idx_team_athletes_team_group
 ON team_athletes(team_id, group_id);
 
+CREATE TABLE IF NOT EXISTS team_user_profiles (
+  team_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  photo_url TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (team_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_user_profiles_team_user
+ON team_user_profiles(team_id, user_id);
+
 CREATE TABLE IF NOT EXISTS announcement_comments (
   id TEXT PRIMARY KEY NOT NULL,
   announcement_id TEXT NOT NULL,

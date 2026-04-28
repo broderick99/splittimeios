@@ -22,6 +22,10 @@ protocol AnnouncementServiceProtocol: Sendable {
 protocol ChatServiceProtocol: Sendable {
     func fetchMessages() async throws -> [ChatMessage]
     func sendMessage(body: String, attachment: ChatAttachmentUpload?) async throws -> ChatMessage
+    func fetchDirectMessageConversations() async throws -> [DirectMessageConversation]
+    func fetchDirectMessages(withUserID: String) async throws -> [DirectMessage]
+    func sendDirectMessage(toUserID: String, body: String, attachment: ChatAttachmentUpload?) async throws -> DirectMessage
+    func markDirectMessagesRead(withUserID: String) async throws
 }
 
 protocol RosterServiceProtocol: Sendable {
@@ -31,11 +35,14 @@ protocol RosterServiceProtocol: Sendable {
 protocol TeamServiceProtocol: Sendable {
     func fetchTeamState() async throws -> TeamStateSnapshot
     func syncTeamState(_ snapshot: TeamStateSnapshot) async throws -> TeamStateSnapshot
+    func uploadProfilePhoto(imageData: Data, filename: String, mimeType: String, athleteID: String?, userID: String?) async throws -> URL
     func fetchAttendance(date: Date) async throws -> [AttendanceRecord]
     func fetchAttendanceMonth(containing date: Date) async throws -> [AttendanceRecord]
     func markAttendance(_ draft: AttendanceMarkDraft) async throws -> AttendanceRecord?
     func fetchTemplateLibrary() async throws -> TemplateLibrarySnapshot
     func syncTemplateLibrary(_ snapshot: TemplateLibrarySnapshot) async throws -> TemplateLibrarySnapshot
+    func fetchProfilePhotoURL(userID: String?) async throws -> URL?
+    func fetchCompletedWorkoutHistory(limit: Int) async throws -> CompletedWorkoutHistorySnapshot
     func fetchTeamBranding() async throws -> TeamBranding
     func updateTeamBranding(_ branding: TeamBranding) async throws -> TeamBranding
     func uploadCompletedWorkout(_ workout: CompletedWorkoutUpload) async throws
@@ -49,9 +56,9 @@ protocol ActivityServiceProtocol: Sendable {
 }
 
 protocol IntegrationServiceProtocol: Sendable {
-    func fetchStravaStatus() async throws -> StravaConnectionStatus
+    func fetchStravaStatus(ownerUserID: String?) async throws -> StravaConnectionStatus
     func startStravaConnect() async throws -> StravaConnectStart
-    func syncStravaActivities() async throws -> StravaSyncResult
+    func syncStravaActivities(ownerUserID: String?) async throws -> StravaSyncResult
     func disconnectStrava() async throws
 }
 

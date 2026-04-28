@@ -208,6 +208,20 @@ function mapChatMessage(row) {
   };
 }
 
+function mapDirectMessage(row) {
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    teamId: row.team_id,
+    senderUserId: row.sender_user_id,
+    senderName: row.sender_name,
+    senderRole: row.sender_role,
+    body: row.body,
+    imageUrl: row.image_url ?? null,
+    createdAt: row.created_at,
+  };
+}
+
 function parseRecurrenceDays(value) {
   if (!value) {
     return [];
@@ -357,6 +371,70 @@ async function requireAuthenticatedTeam(env, request) {
   }
 
   return { currentUser, team };
+}
+
+async function requireTeamMember(env, teamId, userId) {
+  return env.DB.prepare(
+    `SELECT team_members.user_id, team_members.role, users.first_name, users.last_name
+     FROM team_members
+     INNER JOIN users ON users.id = team_members.user_id
+     WHERE team_members.team_id = ? AND team_members.user_id = ?
+     LIMIT 1`
+  )
+    .bind(teamId, userId)
+    .first();
+}
+
+function canonicalDMUserPair(userAId, userBId) {
+  return String(userAId) < String(userBId)
+    ? [String(userAId), String(userBId)]
+    : [String(userBId), String(userAId)];
+}
+
+async function getOrCreateDMThread(env, teamId, userAId, userBId) {
+  const [firstUserId, secondUserId] = canonicalDMUserPair(userAId, userBId);
+
+  const existing = await env.DB.prepare(
+    `SELECT id
+     FROM direct_message_threads
+     WHERE team_id = ? AND user_one_id = ? AND user_two_id = ?
+     LIMIT 1`
+  )
+    .bind(teamId, firstUserId, secondUserId)
+    .first();
+
+  if (existing?.id) {
+    return existing.id;
+  }
+
+  const threadId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    `INSERT INTO direct_message_threads (
+      id, team_id, user_one_id, user_two_id, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`
+  )
+    .bind(threadId, teamId, firstUserId, secondUserId, now, now)
+    .run();
+
+  await env.DB.prepare(
+    `INSERT INTO direct_message_reads (
+      thread_id, user_id, last_read_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(threadId, firstUserId, now, now, now)
+    .run();
+
+  await env.DB.prepare(
+    `INSERT INTO direct_message_reads (
+      thread_id, user_id, last_read_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(threadId, secondUserId, now, now, now)
+    .run();
+
+  return threadId;
 }
 
 function sqlPlaceholders(count) {
@@ -556,7 +634,7 @@ function mapTeamAthleteFromUserRow(row) {
     age: row.age ?? null,
     grade: row.grade ?? null,
     groupId: row.group_id ?? null,
-    photoUrl: null,
+    photoUrl: row.photo_url ?? null,
     createdAt: row.joined_at ?? new Date().toISOString(),
   };
 }
@@ -594,9 +672,12 @@ async function loadTeamStateSnapshot(env, teamId) {
       .all(),
     env.DB.prepare(
       `SELECT users.id, users.first_name, users.last_name, users.email, users.phone, users.age, users.grade,
-              team_members.group_id, team_members.joined_at
+              team_members.group_id, team_members.joined_at, team_user_profiles.photo_url
        FROM team_members
        INNER JOIN users ON users.id = team_members.user_id
+       LEFT JOIN team_user_profiles
+         ON team_user_profiles.team_id = team_members.team_id
+        AND team_user_profiles.user_id = team_members.user_id
        WHERE team_members.team_id = ? AND team_members.role = 'athlete'
        ORDER BY lower(users.last_name) ASC, lower(users.first_name) ASC`
     )
@@ -648,6 +729,7 @@ function mapTemplateLibraryStep(row) {
     distanceValue: row.distance_value === null ? null : Number(row.distance_value),
     distanceUnit: row.distance_unit ?? null,
     durationMilliseconds: row.duration_ms === null ? null : Number(row.duration_ms),
+    splitsPerStep: row.splits_per_step === null ? null : Number(row.splits_per_step),
     label: String(row.label ?? ''),
     repeatGroupId: row.repeat_group_id ?? null,
   };
@@ -672,7 +754,7 @@ async function loadTemplateLibrarySnapshot(env, teamId) {
       .bind(teamId)
       .all(),
     env.DB.prepare(
-      `SELECT id, template_id, sort_order, type, distance_value, distance_unit, duration_ms, label, repeat_group_id
+      `SELECT id, template_id, sort_order, type, distance_value, distance_unit, duration_ms, splits_per_step, label, repeat_group_id
        FROM team_template_steps
        WHERE team_id = ?
        ORDER BY template_id ASC, repeat_group_id IS NOT NULL ASC, repeat_group_id ASC, sort_order ASC`
@@ -779,6 +861,7 @@ function normalizeTemplateLibraryPayload(payload) {
       distanceValue: normalizeOptionalNumber(rawStep.distanceValue),
       distanceUnit,
       durationMilliseconds: normalizeOptionalInt(rawStep.durationMilliseconds),
+      splitsPerStep: Math.max(1, normalizeOptionalInt(rawStep.splitsPerStep) ?? 1),
       label: String(rawStep.label ?? ''),
       repeatGroupId,
     });
@@ -863,8 +946,8 @@ async function syncTemplateLibrary(env, request) {
   for (const step of normalized.steps) {
     await env.DB.prepare(
       `INSERT INTO team_template_steps (
-        id, team_id, template_id, sort_order, type, distance_value, distance_unit, duration_ms, label, repeat_group_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        id, team_id, template_id, sort_order, type, distance_value, distance_unit, duration_ms, splits_per_step, label, repeat_group_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         step.id,
@@ -875,6 +958,7 @@ async function syncTemplateLibrary(env, request) {
         step.distanceValue,
         step.distanceUnit,
         step.durationMilliseconds,
+        step.splitsPerStep,
         step.label,
         step.repeatGroupId,
         new Date().toISOString(),
@@ -1004,6 +1088,29 @@ async function syncTeamState(env, request) {
       )
         .bind(groupID, auth.team.id, remoteUserId)
         .run();
+
+      if (Object.prototype.hasOwnProperty.call(rawAthlete, 'photoUrl')) {
+        const photoUrl = normalizeOptionalText(rawAthlete?.photoUrl);
+        if (photoUrl) {
+          await env.DB.prepare(
+            `INSERT INTO team_user_profiles (
+              team_id, user_id, photo_url, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(team_id, user_id) DO UPDATE SET
+              photo_url = excluded.photo_url,
+              updated_at = excluded.updated_at`
+          )
+            .bind(auth.team.id, remoteUserId, photoUrl, new Date().toISOString(), new Date().toISOString())
+            .run();
+        } else {
+          await env.DB.prepare(
+            `DELETE FROM team_user_profiles
+             WHERE team_id = ? AND user_id = ?`
+          )
+            .bind(auth.team.id, remoteUserId)
+            .run();
+        }
+      }
       continue;
     }
 
@@ -1078,6 +1185,185 @@ async function syncTeamState(env, request) {
 
   const snapshot = await loadTeamStateSnapshot(env, auth.team.id);
   return json(snapshot);
+}
+
+async function uploadTeamProfilePhoto(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+
+  if (auth.error) {
+    return error(auth.error, auth.status);
+  }
+
+  if (!env.FILES) {
+    return error('Image storage is not configured.', 500);
+  }
+
+  const contentType = request.headers.get('content-type') || '';
+  if (!contentType.includes('multipart/form-data')) {
+    return error('Expected multipart form data.', 400);
+  }
+
+  const formData = await request.formData();
+  const image = formData.get('image');
+  if (!(image instanceof File)) {
+    return error('Image file is required.', 400);
+  }
+
+  const requestedAthleteId = normalizeOptionalText(formData.get('athleteId'));
+  const requestedUserId = normalizeOptionalText(formData.get('userId'));
+
+  let targetKind = 'user';
+  let targetId = auth.currentUser.id;
+
+  if (auth.currentUser.role === 'coach' && requestedAthleteId) {
+    const managedAthlete = await env.DB.prepare(
+      `SELECT id
+       FROM team_athletes
+       WHERE team_id = ? AND id = ?
+       LIMIT 1`
+    )
+      .bind(auth.team.id, requestedAthleteId)
+      .first();
+
+    if (!managedAthlete) {
+      return error('Athlete not found.', 404);
+    }
+
+    targetKind = 'athlete';
+    targetId = requestedAthleteId;
+  } else {
+    const resolvedUserId =
+      auth.currentUser.role === 'coach' ? requestedUserId || auth.currentUser.id : auth.currentUser.id;
+
+    const member = await env.DB.prepare(
+      `SELECT user_id
+       FROM team_members
+       WHERE team_id = ? AND user_id = ?
+       LIMIT 1`
+    )
+      .bind(auth.team.id, resolvedUserId)
+      .first();
+
+    if (!member) {
+      return error('User not found on this team.', 404);
+    }
+
+    targetKind = 'user';
+    targetId = resolvedUserId;
+  }
+
+  const extension = getImageExtension(image);
+  const imageKey = `profile/${auth.team.id}/${targetKind}/${targetId}-${Date.now()}.${extension}`;
+
+  await env.FILES.put(imageKey, await image.arrayBuffer(), {
+    httpMetadata: {
+      contentType: image.type || 'image/jpeg',
+    },
+  });
+
+  const url = new URL(request.url);
+  const photoUrl = `${url.origin}/team/profile-photo?key=${encodeURIComponent(imageKey)}`;
+
+  if (targetKind === 'athlete') {
+    await env.DB.prepare(
+      `UPDATE team_athletes
+       SET photo_url = ?, updated_at = ?
+       WHERE team_id = ? AND id = ?`
+    )
+      .bind(photoUrl, new Date().toISOString(), auth.team.id, targetId)
+      .run();
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO team_user_profiles (
+        team_id, user_id, photo_url, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, user_id) DO UPDATE SET
+        photo_url = excluded.photo_url,
+        updated_at = excluded.updated_at`
+    )
+      .bind(auth.team.id, targetId, photoUrl, new Date().toISOString(), new Date().toISOString())
+      .run();
+  }
+
+  return json({
+    photoUrl,
+    athleteId: targetKind === 'athlete' ? targetId : null,
+    userId: targetKind === 'user' ? targetId : null,
+  });
+}
+
+async function getTeamProfilePhotoMeta(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+  if (auth.error) {
+    return error(auth.error, auth.status);
+  }
+
+  const url = new URL(request.url);
+  const requestedUserId = normalizeOptionalText(url.searchParams.get('userId'));
+
+  let targetUserId = auth.currentUser.id;
+  if (requestedUserId) {
+    if (auth.currentUser.role !== 'coach' && requestedUserId !== auth.currentUser.id) {
+      return error('Only coaches can request another user profile photo.', 403);
+    }
+
+    const member = await env.DB.prepare(
+      `SELECT user_id
+       FROM team_members
+       WHERE team_id = ? AND user_id = ?
+       LIMIT 1`
+    )
+      .bind(auth.team.id, requestedUserId)
+      .first();
+
+    if (!member) {
+      return error('User not found on this team.', 404);
+    }
+
+    targetUserId = requestedUserId;
+  }
+
+  const row = await env.DB.prepare(
+    `SELECT photo_url
+     FROM team_user_profiles
+     WHERE team_id = ? AND user_id = ?
+     LIMIT 1`
+  )
+    .bind(auth.team.id, targetUserId)
+    .first();
+
+  return json({
+    userId: targetUserId,
+    photoUrl: row?.photo_url ?? null,
+  });
+}
+
+async function serveTeamProfilePhoto(env, request) {
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key')?.trim();
+
+  if (!key) {
+    return error('Image key is required.', 400);
+  }
+
+  if (!env.FILES) {
+    return error('Image storage is not configured.', 500);
+  }
+
+  const object = await env.FILES.get(key);
+
+  if (!object) {
+    return error('Image not found.', 404);
+  }
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('cache-control', 'public, max-age=31536000, immutable');
+  headers.set('access-control-allow-origin', '*');
+
+  return new Response(object.body, {
+    headers,
+  });
 }
 
 async function listAttendance(env, request) {
@@ -1728,6 +2014,136 @@ async function uploadCompletedWorkout(env, request) {
   });
 }
 
+function workoutHistoryTimestampMs(rawValue) {
+  const parsed = Date.parse(String(rawValue ?? '').trim());
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+  return Date.now();
+}
+
+function mapCompletedWorkoutRow(row) {
+  return {
+    id: row.id,
+    name: String(row.name ?? 'Workout').trim() || 'Workout',
+    workoutAt: workoutHistoryTimestampMs(row.workout_at),
+    templateId: row.template_id ?? null,
+    status: 'completed',
+  };
+}
+
+function normalizeHistoryLimit(rawValue, fallback = 120) {
+  const parsed = Number.parseInt(String(rawValue ?? ''), 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.min(300, Math.max(1, parsed));
+}
+
+async function listCompletedWorkouts(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+  if (auth.error) return error(auth.error, auth.status);
+
+  const url = new URL(request.url);
+  const limit = normalizeHistoryLimit(url.searchParams.get('limit'), 120);
+
+  const workoutsResult = await env.DB.prepare(
+    `SELECT id, name, workout_at, template_id
+     FROM team_workouts
+     WHERE team_id = ?
+     ORDER BY datetime(workout_at) DESC, datetime(updated_at) DESC
+     LIMIT ?`
+  )
+    .bind(auth.team.id, limit)
+    .all();
+
+  const workoutRows = workoutsResult.results ?? [];
+  if (workoutRows.length === 0) {
+    return json({
+      workouts: [],
+      workoutAthletes: [],
+      splits: [],
+    });
+  }
+
+  const workoutIds = workoutRows.map((row) => row.id);
+  const workoutPlaceholders = sqlPlaceholders(workoutIds.length);
+  const resultRowsResult = await env.DB.prepare(
+    `SELECT id, workout_id, athlete_local_id, athlete_user_id, athlete_name, group_id, group_name, group_color_hex
+     FROM team_workout_results
+     WHERE team_id = ? AND workout_id IN (${workoutPlaceholders})
+     ORDER BY datetime(created_at) ASC`
+  )
+    .bind(auth.team.id, ...workoutIds)
+    .all();
+
+  const resultRows = resultRowsResult.results ?? [];
+  const workoutAthletes = [];
+  const athleteIdByResultId = new Map();
+  for (const row of resultRows) {
+    const athleteId =
+      String(row.athlete_local_id ?? row.athlete_user_id ?? row.id ?? '')
+        .trim() || crypto.randomUUID();
+    athleteIdByResultId.set(String(row.id ?? '').trim(), athleteId);
+    workoutAthletes.push({
+      workoutId: row.workout_id,
+      athleteId,
+      groupId: row.group_id ?? null,
+      athleteName: String(row.athlete_name ?? 'Athlete').trim() || 'Athlete',
+      groupName: row.group_name ?? null,
+      groupColorHex: row.group_color_hex ?? null,
+    });
+  }
+
+  let splits = [];
+  if (resultRows.length > 0) {
+    const resultIds = resultRows.map((row) => row.id);
+    const resultPlaceholders = sqlPlaceholders(resultIds.length);
+    const splitRowsResult = await env.DB.prepare(
+      `SELECT splits.id,
+              splits.workout_result_id,
+              results.workout_id,
+              splits.split_number,
+              splits.elapsed_ms,
+              splits.timestamp,
+              splits.is_final,
+              splits.step_type,
+              splits.step_distance_value,
+              splits.step_distance_unit,
+              splits.step_label
+       FROM team_workout_splits splits
+       INNER JOIN team_workout_results results ON results.id = splits.workout_result_id
+       WHERE splits.team_id = ? AND splits.workout_result_id IN (${resultPlaceholders})
+       ORDER BY datetime(splits.timestamp) ASC, splits.split_number ASC`
+    )
+      .bind(auth.team.id, ...resultIds)
+      .all();
+
+    splits = (splitRowsResult.results ?? []).map((row) => {
+      const resultId = String(row.workout_result_id ?? '').trim();
+      return {
+        id: row.id,
+        workoutId: row.workout_id,
+        athleteId: athleteIdByResultId.get(resultId) ?? resultId,
+        splitNumber: Number(row.split_number ?? 0),
+        elapsedMilliseconds: Number(row.elapsed_ms ?? 0),
+        timestamp: workoutHistoryTimestampMs(row.timestamp),
+        isFinal: Number(row.is_final ?? 0) === 1,
+        stepType: row.step_type ?? null,
+        stepDistanceValue: row.step_distance_value === null ? null : Number(row.step_distance_value),
+        stepDistanceUnit: row.step_distance_unit ?? null,
+        stepLabel: row.step_label ?? null,
+      };
+    });
+  }
+
+  return json({
+    workouts: workoutRows.map(mapCompletedWorkoutRow),
+    workoutAthletes,
+    splits,
+  });
+}
+
 function mapActivityFeedItem(row) {
   const ownerName = String(row.owner_name ?? '').trim();
   return {
@@ -2263,13 +2679,21 @@ async function refreshStravaTokenIfNeeded(env, connectionRow) {
   };
 }
 
-async function fetchStravaActivities(accessToken) {
+async function fetchStravaActivities(accessToken, { afterUnix = null, perPage = 10, maxPages = 2 } = {}) {
   const all = [];
-  const perPage = 50;
+  const boundedPerPage = Math.max(1, Math.min(30, Number(perPage) || 10));
+  const boundedMaxPages = Math.max(1, Math.min(3, Number(maxPages) || 2));
 
-  for (let page = 1; page <= 3; page += 1) {
+  for (let page = 1; page <= boundedMaxPages; page += 1) {
+    const url = new URL('https://www.strava.com/api/v3/athlete/activities');
+    url.searchParams.set('per_page', String(boundedPerPage));
+    url.searchParams.set('page', String(page));
+    if (Number.isFinite(Number(afterUnix)) && Number(afterUnix) > 0) {
+      url.searchParams.set('after', String(Math.floor(Number(afterUnix))));
+    }
+
     const response = await fetch(
-      `https://www.strava.com/api/v3/athlete/activities?per_page=${perPage}&page=${page}`,
+      url.toString(),
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -2283,12 +2707,62 @@ async function fetchStravaActivities(accessToken) {
     }
 
     all.push(...payload);
-    if (payload.length < perPage) {
+    if (payload.length < boundedPerPage) {
       break;
     }
   }
 
   return all;
+}
+
+async function latestImportedStravaStartUnix(env, teamId, userId) {
+  const row = await env.DB.prepare(
+    `SELECT start_at
+     FROM activity_feed_items
+     WHERE team_id = ? AND user_id = ? AND source = 'strava'
+     ORDER BY datetime(start_at) DESC
+     LIMIT 1`
+  )
+    .bind(teamId, userId)
+    .first();
+
+  if (!row?.start_at) {
+    return null;
+  }
+
+  const latestMs = new Date(String(row.start_at)).getTime();
+  if (!Number.isFinite(latestMs)) {
+    return null;
+  }
+
+  // Keep a short overlap so Strava edits and delayed uploads still reconcile.
+  return Math.max(0, Math.floor(latestMs / 1000) - 3 * 24 * 60 * 60);
+}
+
+async function resolveStravaSyncUserId(env, auth, requestedUserId) {
+  const targetUserId = String(requestedUserId ?? '').trim();
+  if (!targetUserId || targetUserId === auth.currentUser.id) {
+    return { userId: auth.currentUser.id };
+  }
+
+  if (auth.currentUser.role !== 'coach') {
+    return { error: 'Only coaches can sync an athlete Strava account.', status: 403 };
+  }
+
+  const athlete = await env.DB.prepare(
+    `SELECT user_id
+     FROM team_members
+     WHERE team_id = ? AND user_id = ? AND role = 'athlete'
+     LIMIT 1`
+  )
+    .bind(auth.team.id, targetUserId)
+    .first();
+
+  if (!athlete) {
+    return { error: 'Athlete not found.', status: 404 };
+  }
+
+  return { userId: targetUserId };
 }
 
 async function upsertStravaActivities(env, teamId, userId, activities) {
@@ -2360,13 +2834,17 @@ async function stravaStatus(env, request) {
   const auth = await requireAuthenticatedTeam(env, request);
   if (auth.error) return error(auth.error, auth.status);
 
+  const url = new URL(request.url);
+  const target = await resolveStravaSyncUserId(env, auth, url.searchParams.get('ownerUserId'));
+  if (target.error) return error(target.error, target.status);
+
   const row = await env.DB.prepare(
     `SELECT athlete_name, expires_at
      FROM strava_connections
      WHERE user_id = ? AND team_id = ?
      LIMIT 1`
   )
-    .bind(auth.currentUser.id, auth.team.id)
+    .bind(target.userId, auth.team.id)
     .first();
 
   if (!row) {
@@ -2524,13 +3002,17 @@ async function stravaSync(env, request) {
   const auth = await requireAuthenticatedTeam(env, request);
   if (auth.error) return error(auth.error, auth.status);
 
+  const payload = await request.json().catch(() => ({}));
+  const target = await resolveStravaSyncUserId(env, auth, payload?.ownerUserId);
+  if (target.error) return error(target.error, target.status);
+
   const connection = await env.DB.prepare(
     `SELECT user_id, team_id, access_token, refresh_token, expires_at, scope
      FROM strava_connections
      WHERE user_id = ? AND team_id = ?
      LIMIT 1`
   )
-    .bind(auth.currentUser.id, auth.team.id)
+    .bind(target.userId, auth.team.id)
     .first();
 
   if (!connection) {
@@ -2546,12 +3028,17 @@ async function stravaSync(env, request) {
 
   let activities = [];
   try {
-    activities = await fetchStravaActivities(activeConnection.access_token);
+    const afterUnix = await latestImportedStravaStartUnix(env, auth.team.id, target.userId);
+    activities = await fetchStravaActivities(activeConnection.access_token, {
+      afterUnix,
+      perPage: afterUnix ? 10 : 12,
+      maxPages: afterUnix ? 2 : 1,
+    });
   } catch (err) {
     return error(err instanceof Error ? err.message : 'Could not fetch Strava activities.', 500);
   }
 
-  const imported = await upsertStravaActivities(env, auth.team.id, auth.currentUser.id, activities);
+  const imported = await upsertStravaActivities(env, auth.team.id, target.userId, activities);
 
   return json({
     imported,
@@ -4067,16 +4554,22 @@ async function teamRoster(env, request) {
 
   const rows = await env.DB.prepare(
     `SELECT users.id, users.role, users.first_name, users.last_name, users.email,
-            users.phone, users.age, users.grade
+            users.phone, users.age, users.grade, team_user_profiles.photo_url
      FROM team_members
      INNER JOIN users ON users.id = team_members.user_id
+     LEFT JOIN team_user_profiles
+       ON team_user_profiles.team_id = team_members.team_id
+      AND team_user_profiles.user_id = team_members.user_id
      WHERE team_members.team_id = ?
      ORDER BY CASE users.role WHEN 'coach' THEN 0 ELSE 1 END, users.last_name ASC, users.first_name ASC`
   )
     .bind(team.id)
     .all();
 
-  const members = (rows.results ?? []).map(mapUser);
+  const members = (rows.results ?? []).map((row) => ({
+    ...mapUser(row),
+    photoUrl: row.photo_url ?? null,
+  }));
   return json(members);
 }
 
@@ -4356,6 +4849,286 @@ async function createChatMessage(env, request) {
   return json(message, 201);
 }
 
+async function listDirectMessageConversations(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+  if (auth.error) {
+    return error(auth.error, auth.status);
+  }
+
+  const threadRows = await env.DB.prepare(
+    `SELECT id, team_id, user_one_id, user_two_id, updated_at
+     FROM direct_message_threads
+     WHERE team_id = ? AND (user_one_id = ? OR user_two_id = ?)
+     ORDER BY datetime(updated_at) DESC`
+  )
+    .bind(auth.team.id, auth.currentUser.id, auth.currentUser.id)
+    .all();
+
+  const conversations = [];
+  for (const row of threadRows.results ?? []) {
+    const partnerUserId =
+      row.user_one_id === auth.currentUser.id ? row.user_two_id : row.user_one_id;
+
+    const partner = await env.DB.prepare(
+      `SELECT team_members.user_id, team_members.role, users.first_name, users.last_name, team_user_profiles.photo_url
+       FROM team_members
+       INNER JOIN users ON users.id = team_members.user_id
+       LEFT JOIN team_user_profiles
+         ON team_user_profiles.team_id = team_members.team_id
+        AND team_user_profiles.user_id = team_members.user_id
+       WHERE team_members.team_id = ? AND team_members.user_id = ?
+       LIMIT 1`
+    )
+      .bind(auth.team.id, partnerUserId)
+      .first();
+
+    if (!partner) {
+      continue;
+    }
+
+    const latestMessageRow = await env.DB.prepare(
+      `SELECT id, thread_id, team_id, sender_user_id, sender_name, sender_role, body, image_url, created_at
+       FROM direct_message_messages
+       WHERE thread_id = ?
+       ORDER BY datetime(created_at) DESC
+       LIMIT 1`
+    )
+      .bind(row.id)
+      .first();
+
+    const readRow = await env.DB.prepare(
+      `SELECT last_read_at
+       FROM direct_message_reads
+       WHERE thread_id = ? AND user_id = ?
+       LIMIT 1`
+    )
+      .bind(row.id, auth.currentUser.id)
+      .first();
+
+    const latestMessage = latestMessageRow ? mapDirectMessage(latestMessageRow) : null;
+    const lastReadAt = readRow?.last_read_at ? Date.parse(readRow.last_read_at) : 0;
+    const latestCreatedAt = latestMessage?.createdAt ? Date.parse(latestMessage.createdAt) : 0;
+    const hasUnreadIncoming =
+      Boolean(latestMessage) &&
+      latestMessage.senderUserId !== auth.currentUser.id &&
+      Number.isFinite(latestCreatedAt) &&
+      latestCreatedAt > (Number.isFinite(lastReadAt) ? lastReadAt : 0);
+
+    conversations.push({
+      threadId: row.id,
+      participantUserId: partner.user_id,
+      participantName: `${partner.first_name ?? ''} ${partner.last_name ?? ''}`.trim() || 'Team Member',
+      participantRole: partner.role,
+      participantPhotoUrl: partner.photo_url ?? null,
+      latestMessage,
+      hasUnreadIncoming,
+    });
+  }
+
+  return json(conversations);
+}
+
+async function listDirectMessages(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+  if (auth.error) {
+    return error(auth.error, auth.status);
+  }
+
+  const url = new URL(request.url);
+  const otherUserId = String(url.searchParams.get('userId') ?? '').trim();
+  if (!otherUserId) {
+    return error('userId is required.');
+  }
+  if (otherUserId === auth.currentUser.id) {
+    return error('You cannot DM yourself.', 400);
+  }
+
+  const recipientMember = await requireTeamMember(env, auth.team.id, otherUserId);
+  if (!recipientMember) {
+    return error('Recipient not found on this team.', 404);
+  }
+
+  const [firstUserId, secondUserId] = canonicalDMUserPair(auth.currentUser.id, otherUserId);
+  const thread = await env.DB.prepare(
+    `SELECT id
+     FROM direct_message_threads
+     WHERE team_id = ? AND user_one_id = ? AND user_two_id = ?
+     LIMIT 1`
+  )
+    .bind(auth.team.id, firstUserId, secondUserId)
+    .first();
+
+  if (!thread?.id) {
+    return json([]);
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT id, thread_id, team_id, sender_user_id, sender_name, sender_role, body, image_url, created_at
+     FROM direct_message_messages
+     WHERE thread_id = ?
+     ORDER BY datetime(created_at) ASC`
+  )
+    .bind(thread.id)
+    .all();
+
+  return json((rows.results ?? []).map(mapDirectMessage));
+}
+
+async function createDirectMessage(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+  if (auth.error) {
+    return error(auth.error, auth.status);
+  }
+
+  const contentType = request.headers.get('content-type') || '';
+  let recipientUserId = '';
+  let body = '';
+  let image = null;
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await request.formData();
+    recipientUserId = String(formData.get('recipientUserId') ?? '').trim();
+    body = String(formData.get('body') ?? '').trim();
+    const candidate = formData.get('image');
+    image = candidate instanceof File ? candidate : null;
+  } else {
+    const payload = await request.json().catch(() => ({}));
+    recipientUserId = String(payload.recipientUserId ?? '').trim();
+    body = String(payload.body ?? '').trim();
+  }
+
+  if (!recipientUserId) {
+    return error('recipientUserId is required.');
+  }
+  if (recipientUserId === auth.currentUser.id) {
+    return error('You cannot DM yourself.', 400);
+  }
+  if (!body && !image) {
+    return error('Message body or image is required.');
+  }
+
+  const recipientMember = await requireTeamMember(env, auth.team.id, recipientUserId);
+  if (!recipientMember) {
+    return error('Recipient not found on this team.', 404);
+  }
+
+  const threadId = await getOrCreateDMThread(env, auth.team.id, auth.currentUser.id, recipientUserId);
+  const now = new Date().toISOString();
+
+  const message = {
+    id: crypto.randomUUID(),
+    threadId,
+    teamId: auth.team.id,
+    senderUserId: auth.currentUser.id,
+    senderName: `${auth.currentUser.firstName} ${auth.currentUser.lastName}`.trim() || 'Team Member',
+    senderRole: auth.currentUser.role,
+    body,
+    imageKey: null,
+    imageUrl: null,
+    createdAt: now,
+  };
+
+  if (image) {
+    try {
+      const upload = await uploadChatImage(env, request, auth.team.id, message.id, image);
+      message.imageKey = upload.imageKey;
+      message.imageUrl = upload.imageUrl;
+    } catch (err) {
+      return error(err instanceof Error ? err.message : 'Could not upload image.', 500);
+    }
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO direct_message_messages (
+      id, thread_id, team_id, sender_user_id, sender_name, sender_role, body, image_key, image_url, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      message.id,
+      message.threadId,
+      message.teamId,
+      message.senderUserId,
+      message.senderName,
+      message.senderRole,
+      message.body,
+      message.imageKey,
+      message.imageUrl,
+      message.createdAt
+    )
+    .run();
+
+  await env.DB.prepare(
+    `UPDATE direct_message_threads
+     SET updated_at = ?
+     WHERE id = ?`
+  )
+    .bind(now, threadId)
+    .run();
+
+  await env.DB.prepare(
+    `INSERT INTO direct_message_reads (
+      thread_id, user_id, last_read_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(thread_id, user_id) DO UPDATE SET
+      last_read_at = excluded.last_read_at,
+      updated_at = excluded.updated_at`
+  )
+    .bind(threadId, auth.currentUser.id, now, now, now)
+    .run();
+
+  return json(message, 201);
+}
+
+async function markDirectMessagesRead(env, request) {
+  const auth = await requireAuthenticatedTeam(env, request);
+  if (auth.error) {
+    return error(auth.error, auth.status);
+  }
+
+  const payload = await request.json().catch(() => ({}));
+  const otherUserId = String(payload.userId ?? '').trim();
+
+  if (!otherUserId) {
+    return error('userId is required.');
+  }
+  if (otherUserId === auth.currentUser.id) {
+    return error('You cannot DM yourself.', 400);
+  }
+
+  const recipientMember = await requireTeamMember(env, auth.team.id, otherUserId);
+  if (!recipientMember) {
+    return error('User not found on this team.', 404);
+  }
+
+  const [firstUserId, secondUserId] = canonicalDMUserPair(auth.currentUser.id, otherUserId);
+  const thread = await env.DB.prepare(
+    `SELECT id
+     FROM direct_message_threads
+     WHERE team_id = ? AND user_one_id = ? AND user_two_id = ?
+     LIMIT 1`
+  )
+    .bind(auth.team.id, firstUserId, secondUserId)
+    .first();
+
+  if (!thread?.id) {
+    return json({ ok: true });
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO direct_message_reads (
+      thread_id, user_id, last_read_at, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(thread_id, user_id) DO UPDATE SET
+      last_read_at = excluded.last_read_at,
+      updated_at = excluded.updated_at`
+  )
+    .bind(thread.id, auth.currentUser.id, now, now, now)
+    .run();
+
+  return json({ ok: true });
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -4463,6 +5236,18 @@ export default {
       return listTeamState(env, request);
     }
 
+    if (request.method === 'POST' && url.pathname === '/team/profile-photo') {
+      return uploadTeamProfilePhoto(env, request);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/team/profile-photo') {
+      return serveTeamProfilePhoto(env, request);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/team/profile-photo/meta') {
+      return getTeamProfilePhotoMeta(env, request);
+    }
+
 	    if (request.method === 'POST' && url.pathname === '/team/sync') {
 	      return syncTeamState(env, request);
 	    }
@@ -4517,6 +5302,10 @@ export default {
 
 	    if (request.method === 'POST' && url.pathname === '/workouts/completed') {
 	      return uploadCompletedWorkout(env, request);
+	    }
+
+	    if (request.method === 'GET' && url.pathname === '/workouts/completed') {
+	      return listCompletedWorkouts(env, request);
 	    }
 
 	    if (
@@ -4577,6 +5366,22 @@ export default {
 
     if (request.method === 'GET' && url.pathname === '/chat/image') {
       return serveChatImage(env, request);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/dm/conversations') {
+      return listDirectMessageConversations(env, request);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/dm/messages') {
+      return listDirectMessages(env, request);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/dm/messages') {
+      return createDirectMessage(env, request);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/dm/read') {
+      return markDirectMessagesRead(env, request);
     }
 
     if (request.method === 'GET' && url.pathname === '/schedule') {

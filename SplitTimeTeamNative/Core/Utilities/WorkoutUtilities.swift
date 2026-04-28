@@ -76,6 +76,7 @@ func expandTemplate(steps: [TemplateStep], repeatGroups: [TemplateRepeatGroup]) 
                     distanceValue: step.distanceValue,
                     distanceUnit: step.distanceUnit,
                     durationMilliseconds: step.durationMilliseconds,
+                    splitsPerStep: step.splitsPerStep,
                     label: step.label.isEmpty ? autoLabel(for: step) : step.label,
                     repeatIteration: nil,
                     repeatTotal: nil
@@ -94,6 +95,7 @@ func expandTemplate(steps: [TemplateStep], repeatGroups: [TemplateRepeatGroup]) 
                             distanceValue: step.distanceValue,
                             distanceUnit: step.distanceUnit,
                             durationMilliseconds: step.durationMilliseconds,
+                            splitsPerStep: step.splitsPerStep,
                             label: step.label.isEmpty ? autoLabel(for: step) : step.label,
                             repeatIteration: repeatIndex,
                             repeatTotal: group.repeatCount

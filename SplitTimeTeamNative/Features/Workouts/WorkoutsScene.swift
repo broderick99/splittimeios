@@ -10,8 +10,7 @@ struct WorkoutsScene: View {
     let role: UserRole
     let teamService: any TeamServiceProtocol
     @State private var section: Section = .templates
-    @State private var showNewTemplate = false
-    @State private var editingTemplate: TemplateRoute?
+    @State private var activeTemplateEditor: TemplateEditorRoute?
     @State private var selectedWorkout: WorkoutRoute?
     @State private var deleteTarget: WorkoutRoute?
 
@@ -38,7 +37,7 @@ struct WorkoutsScene: View {
 
             if section == .templates {
                 FloatingAddButton {
-                    showNewTemplate = true
+                    activeTemplateEditor = .new
                 }
                 .padding(.trailing, 20)
                 .padding(.bottom, 18)
@@ -47,16 +46,18 @@ struct WorkoutsScene: View {
         .background(AppTheme.Palette.background)
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            await refreshTemplatesFromCloud()
+            async let templatesTask: Void = refreshTemplatesFromCloud()
+            async let historyTask: Void = refreshWorkoutHistoryFromCloud()
+            _ = await (templatesTask, historyTask)
         }
-        .navigationDestination(isPresented: $showNewTemplate) {
-            TemplateEditorScene(localStore: localStore, templateID: nil) {
-                await syncTemplatesToCloud()
-            }
-        }
-        .navigationDestination(item: $editingTemplate) { route in
-            TemplateEditorScene(localStore: localStore, templateID: route.id) {
-                await syncTemplatesToCloud()
+        .sheet(item: $activeTemplateEditor) { route in
+            NavigationStack {
+                TemplateEditorScene(
+                    localStore: localStore,
+                    templateID: route.templateID
+                ) {
+                    await syncTemplatesToCloud()
+                }
             }
         }
         .navigationDestination(item: $selectedWorkout) { route in
@@ -81,20 +82,20 @@ struct WorkoutsScene: View {
     }
 
     private var topNavigationBar: some View {
-        HStack(spacing: 12) {
-            Color.clear
-                .frame(width: 34, height: 34)
-
-            Spacer(minLength: 8)
-
+        ZStack {
             Text("Workouts")
-                .font(.headline.weight(.semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(AppTheme.Palette.textPrimary)
 
-            Spacer(minLength: 8)
+            HStack {
+                Color.clear
+                    .frame(width: 34, height: 34)
 
-            Color.clear
-                .frame(width: 34, height: 34)
+                Spacer(minLength: 0)
+
+                Color.clear
+                    .frame(width: 34, height: 34)
+            }
         }
         .padding(.horizontal, AppTheme.Metrics.screenPadding)
         .padding(.top, 4)
@@ -119,7 +120,7 @@ struct WorkoutsScene: View {
                     LazyVStack(spacing: 14) {
                         ForEach(localStore.templateSummaries) { template in
                             Button {
-                                editingTemplate = TemplateRoute(id: template.id)
+                                activeTemplateEditor = .edit(template.id)
                             } label: {
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack {
@@ -199,6 +200,9 @@ struct WorkoutsScene: View {
                     }
                     .padding(AppTheme.Metrics.screenPadding)
                 }
+                .refreshable {
+                    await refreshWorkoutHistoryFromCloud()
+                }
             }
         }
     }
@@ -225,10 +229,42 @@ struct WorkoutsScene: View {
             // Keep local edits even if cloud sync fails; next sync can reconcile.
         }
     }
+
+    private func refreshWorkoutHistoryFromCloud() async {
+        do {
+            let snapshot = try await teamService.fetchCompletedWorkoutHistory(limit: 200)
+            await localStore.applyRemoteCompletedWorkoutHistory(snapshot)
+        } catch {
+            // Keep local history when backend fetch is unavailable.
+        }
+    }
 }
 
 struct TemplateRoute: Identifiable, Hashable {
     let id: String
+}
+
+enum TemplateEditorRoute: Hashable, Identifiable {
+    case new
+    case edit(String)
+
+    var id: String {
+        switch self {
+        case .new:
+            return "new"
+        case let .edit(templateID):
+            return "edit-\(templateID)"
+        }
+    }
+
+    var templateID: String? {
+        switch self {
+        case .new:
+            return nil
+        case let .edit(templateID):
+            return templateID
+        }
+    }
 }
 
 struct WorkoutRoute: Identifiable, Hashable {

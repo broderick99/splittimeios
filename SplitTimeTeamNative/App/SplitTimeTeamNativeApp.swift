@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct SplitTimeTeamNativeApp: App {
@@ -8,6 +9,7 @@ struct SplitTimeTeamNativeApp: App {
     @StateObject private var timerRuntimeStore: TimerRuntimeStore
 
     init() {
+        Self.configureInteractionDefaults()
         let environment = AppEnvironment.live()
         self.environment = environment
         let localStore = LocalStore(repository: environment.localDataRepository)
@@ -35,5 +37,11 @@ struct SplitTimeTeamNativeApp: App {
                 environment: environment
             )
         }
+    }
+
+    private static func configureInteractionDefaults() {
+        // Make taps on controls inside scrollable containers register immediately.
+        UIScrollView.appearance().delaysContentTouches = false
+        UIScrollView.appearance().canCancelContentTouches = true
     }
 }

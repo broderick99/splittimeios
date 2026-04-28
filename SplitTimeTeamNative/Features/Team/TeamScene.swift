@@ -44,6 +44,62 @@ private enum SocialTimestampFormatter {
     }
 }
 
+private enum ChatTimestampSeparatorFormatter {
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.calendar = .current
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
+    private static let weekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.calendar = .current
+        formatter.dateFormat = "EEEE"
+        return formatter
+    }()
+
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.calendar = .current
+        formatter.dateFormat = "M/d/yy"
+        return formatter
+    }()
+
+    static func string(for date: Date, now: Date = Date()) -> String {
+        let calendar = Calendar.current
+        let time = timeFormatter.string(from: date)
+
+        if calendar.isDateInToday(date) {
+            return "Today at \(time)"
+        }
+
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday at \(time)"
+        }
+
+        let daysAgo = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        if (2...7).contains(daysAgo) {
+            return "\(weekdayFormatter.string(from: date)) at \(time)"
+        }
+
+        return "\(shortDateFormatter.string(from: date)) at \(time)"
+    }
+}
+
+private func isTaskCancellation(_ error: Error) -> Bool {
+    if error is CancellationError {
+        return true
+    }
+
+    let nsError = error as NSError
+    return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+}
+
 @MainActor
 private final class TeamAnnouncementsViewModel: ObservableObject {
     @Published private(set) var announcements: [Announcement] = []
@@ -64,6 +120,9 @@ private final class TeamAnnouncementsViewModel: ObservableObject {
             announcements = try await service.fetchAnnouncements().sorted { $0.createdAt > $1.createdAt }
             errorMessage = nil
         } catch {
+            if isTaskCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -111,6 +170,9 @@ private final class AnnouncementCommentsStore: ObservableObject {
             commentsByAnnouncementID[announcementID] = comments.sorted { $0.createdAt < $1.createdAt }
             errorMessage = nil
         } catch {
+            if isTaskCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -133,23 +195,48 @@ private final class AnnouncementCommentsStore: ObservableObject {
             errorMessage = nil
             return true
         } catch {
+            if isTaskCancellation(error) {
+                return false
+            }
             errorMessage = error.localizedDescription
             return false
         }
     }
 }
 
+
 @MainActor
 private final class TeamChatViewModel: ObservableObject {
+    private let maxLoadedMessages = 200
+
+    private struct PendingSendUnit {
+        let localID: String
+        let body: String
+        let attachment: ChatAttachmentUpload?
+    }
+
     @Published private(set) var messages: [ChatMessage] = []
+    @Published private(set) var deliveryStatusByMessageID: [String: ChatDeliveryStatus] = [:]
+    @Published private(set) var latestOutgoingMessageID: String?
     @Published var draft = ""
     @Published var isLoading = false
     @Published var errorMessage: String?
 
     private let service: any ChatServiceProtocol
+    private let currentUserID: String
+    private let currentUserName: String
+    private let currentUserRole: UserRole
 
-    init(service: any ChatServiceProtocol) {
+    init(
+        service: any ChatServiceProtocol,
+        currentUserID: String,
+        currentUserName: String,
+        currentUserRole: UserRole
+    ) {
         self.service = service
+        self.currentUserID = currentUserID
+        self.currentUserName = currentUserName
+        self.currentUserRole = currentUserRole
     }
 
     func refresh() async {
@@ -157,9 +244,14 @@ private final class TeamChatViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            messages = try await service.fetchMessages().sorted { $0.createdAt < $1.createdAt }
+            let fetched = try await service.fetchMessages().sorted { $0.createdAt < $1.createdAt }
+            messages = Array(fetched.suffix(maxLoadedMessages))
+            pruneStaleDeliveryStatus()
             errorMessage = nil
         } catch {
+            if isTaskCancellation(error) {
+                return
+            }
             errorMessage = error.localizedDescription
         }
     }
@@ -169,35 +261,129 @@ private final class TeamChatViewModel: ObservableObject {
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty || attachment != nil else { return false }
 
-        do {
-            var sentMessages: [ChatMessage] = []
-
-            if let attachment {
-                let imageMessage = try await service.sendMessage(body: "", attachment: attachment)
-                sentMessages.append(imageMessage)
+        if let attachment {
+            do {
+                let sentImageMessage = try await service.sendMessage(body: "", attachment: attachment)
+                messages.append(sentImageMessage)
+                trimMessagesIfNeeded()
+                markAsSent(messageID: sentImageMessage.id)
+            } catch {
+                if isTaskCancellation(error) {
+                    return false
+                }
+                errorMessage = error.localizedDescription
+                return false
             }
-
-            if !body.isEmpty {
-                let textMessage = try await service.sendMessage(body: body, attachment: nil)
-                sentMessages.append(textMessage)
-            }
-
-            messages.append(contentsOf: sentMessages)
-            draft = ""
-            errorMessage = nil
-            return true
-        } catch {
-            errorMessage = error.localizedDescription
-            return false
         }
+
+        if !body.isEmpty {
+            let pendingUnit = PendingSendUnit(
+                localID: "local-\(UUID().uuidString)",
+                body: body,
+                attachment: nil
+            )
+            appendPendingMessages(for: [pendingUnit])
+
+            do {
+                let sentMessage = try await service.sendMessage(body: pendingUnit.body, attachment: nil)
+                replacePendingMessage(localID: pendingUnit.localID, with: sentMessage)
+                markAsSent(messageID: sentMessage.id)
+            } catch {
+                if isTaskCancellation(error) {
+                    markAsFailed(messageID: pendingUnit.localID, reason: "Canceled")
+                    return false
+                }
+                markAsFailed(messageID: pendingUnit.localID, reason: "Failed")
+                errorMessage = error.localizedDescription
+                return false
+            }
+        }
+
+        draft = ""
+        errorMessage = nil
+        return true
+    }
+
+    func deliveryStatus(for message: ChatMessage) -> ChatDeliveryStatus? {
+        if let explicit = deliveryStatusByMessageID[message.id] {
+            return explicit
+        }
+        return nil
+    }
+
+    private func appendPendingMessages(for pendingUnits: [PendingSendUnit]) {
+        for unit in pendingUnits {
+            let pendingMessage = ChatMessage(
+                id: unit.localID,
+                teamID: messages.last?.teamID ?? "local",
+                senderUserID: currentUserID,
+                senderName: currentUserName,
+                senderRole: currentUserRole,
+                body: unit.body,
+                imageURL: nil,
+                createdAt: Date()
+            )
+            messages.append(pendingMessage)
+            deliveryStatusByMessageID[unit.localID] = .sending
+            latestOutgoingMessageID = unit.localID
+        }
+        trimMessagesIfNeeded()
+    }
+
+    private func replacePendingMessage(localID: String, with sentMessage: ChatMessage) {
+        if let index = messages.firstIndex(where: { $0.id == localID }) {
+            messages[index] = sentMessage
+        } else {
+            messages.append(sentMessage)
+        }
+        deliveryStatusByMessageID[localID] = nil
+    }
+
+    private func markAsSent(messageID: String) {
+        let sentMessageIDs = deliveryStatusByMessageID.compactMap { messageID, status in
+            status == .sent ? messageID : nil
+        }
+        for existingMessageID in sentMessageIDs {
+            deliveryStatusByMessageID[existingMessageID] = nil
+        }
+        deliveryStatusByMessageID[messageID] = .sent
+        latestOutgoingMessageID = messageID
+        pruneStaleDeliveryStatus()
+    }
+
+    private func markAsFailed(messageID: String, reason: String) {
+        deliveryStatusByMessageID[messageID] = .failed(reason)
+        latestOutgoingMessageID = messageID
+        pruneStaleDeliveryStatus()
+    }
+
+    private func pruneStaleDeliveryStatus() {
+        let knownMessageIDs = Set(messages.map(\.id))
+        deliveryStatusByMessageID = deliveryStatusByMessageID.filter { knownMessageIDs.contains($0.key) }
+        if let latestOutgoingMessageID, !knownMessageIDs.contains(latestOutgoingMessageID) {
+            self.latestOutgoingMessageID = nil
+        }
+    }
+
+    private func trimMessagesIfNeeded() {
+        guard messages.count > maxLoadedMessages else { return }
+        messages = Array(messages.suffix(maxLoadedMessages))
+        pruneStaleDeliveryStatus()
     }
 }
 
 struct TeamScene: View {
     enum Section: String, CaseIterable {
-        case overview = "Overview"
         case roster = "Roster"
         case chat = "Chat"
+    }
+
+    enum ChatThreadRoute: String, Identifiable, Hashable {
+        case teamChat
+        case announcements
+        case directMessages
+
+        var id: String { rawValue }
     }
 
     enum RosterSection: String, CaseIterable {
@@ -217,8 +403,9 @@ struct TeamScene: View {
     @StateObject private var announcementsViewModel: TeamAnnouncementsViewModel
     @StateObject private var chatViewModel: TeamChatViewModel
     @StateObject private var announcementCommentsStore: AnnouncementCommentsStore
+    @StateObject private var directMessagesViewModel: DirectMessagesViewModel
 
-    @State private var section: Section = .overview
+    @State private var section: Section = .roster
     @State private var rosterSection: RosterSection = .athletes
     @State private var showAnnouncementComposer = false
     @State private var showAthleteComposer = false
@@ -231,10 +418,20 @@ struct TeamScene: View {
     @State private var attendanceErrorMessage: String?
     @State private var selectedAttendanceAthlete: Athlete?
     @State private var selectedAthleteRoute: AthleteRoute?
+    @State private var selectedChatThreadRoute: ChatThreadRoute?
     @State private var showTeamLogoPhotoLibrary = false
     @State private var teamLogoPickerItem: PhotosPickerItem?
     @State private var showTeamLogoCamera = false
+    @State private var showTeamSettings = false
+    @State private var activePhotoCropRequest: TeamPhotoCropRequest?
+    @State private var isPreparingTeamLogoPhoto = false
+    @State private var teamLogoPhotoErrorMessage: String?
+    @State private var userPhotoURLsByUserID: [String: URL] = [:]
+    @State private var remoteRosterMembers: [TeamRosterMember] = []
+    @State private var threadLastSeenByKey: [String: Date] = [:]
     @AppStorage("splitTimeTeam.teamLogoJPEGData") private var teamLogoData = Data()
+    @AppStorage("splitTimeTeam.teamNameOverride") private var teamNameOverride = ""
+    @AppStorage("splitTimeTeam.chatThreadLastSeenData") private var chatThreadLastSeenData = Data()
 
     init(
         role: UserRole,
@@ -256,10 +453,21 @@ struct TeamScene: View {
             wrappedValue: TeamAnnouncementsViewModel(service: environment.announcementService)
         )
         _chatViewModel = StateObject(
-            wrappedValue: TeamChatViewModel(service: environment.chatService)
+            wrappedValue: TeamChatViewModel(
+                service: environment.chatService,
+                currentUserID: currentUserID,
+                currentUserName: currentUserName,
+                currentUserRole: role
+            )
         )
         _announcementCommentsStore = StateObject(
             wrappedValue: AnnouncementCommentsStore(service: environment.announcementService)
+        )
+        _directMessagesViewModel = StateObject(
+            wrappedValue: DirectMessagesViewModel(
+                service: environment.chatService,
+                currentUserID: currentUserID
+            )
         )
     }
 
@@ -275,8 +483,6 @@ struct TeamScene: View {
                 )
 
                 switch section {
-                case .overview:
-                    overviewContent
                 case .roster:
                     rosterContent
                 case .chat:
@@ -293,10 +499,14 @@ struct TeamScene: View {
         .background(AppTheme.Palette.background)
         .toolbar(.hidden, for: .navigationBar)
         .task {
+            restoreThreadLastSeen()
             await syncRemoteTeamState()
+            await refreshRosterProfilePhotos()
             await loadRemoteTeamBranding()
             await announcementsViewModel.refresh()
             await chatViewModel.refresh()
+            directMessagesViewModel.setParticipants(dmParticipants)
+            await directMessagesViewModel.refreshConversations()
         }
         .sheet(isPresented: $showAnnouncementComposer) {
             AnnouncementComposerSheet {
@@ -308,17 +518,33 @@ struct TeamScene: View {
         }
         .sheet(isPresented: $showAthleteComposer) {
             AthleteComposerSheet(localStore: localStore) {
-                await syncLocalTeamToRemote()
+                Task {
+                    await syncLocalTeamToRemote()
+                }
             }
         }
         .sheet(isPresented: $showGroupComposer) {
             GroupEditorSheet(localStore: localStore, group: nil) {
-                await syncLocalTeamToRemote()
+                Task {
+                    await syncLocalTeamToRemote()
+                }
             }
+        }
+        .sheet(isPresented: $showTeamSettings) {
+            TeamSettingsSheet(
+                role: role,
+                initialTeamName: displayTeamName,
+                teamCode: displayTeamCode,
+                onSaveTeamName: { updatedName in
+                    teamNameOverride = updatedName
+                }
+            )
         }
         .sheet(item: $editingGroup) { group in
             GroupEditorSheet(localStore: localStore, group: group) {
-                await syncLocalTeamToRemote()
+                Task {
+                    await syncLocalTeamToRemote()
+                }
             }
         }
         .sheet(item: $selectedAttendanceAthlete) { athlete in
@@ -336,9 +562,54 @@ struct TeamScene: View {
         }
         .sheet(isPresented: $showTeamLogoCamera) {
             CameraImagePicker { image in
-                saveTeamLogo(image)
+                activePhotoCropRequest = TeamPhotoCropRequest(image: image, kind: .teamLogo)
             }
             .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $activePhotoCropRequest) { request in
+            PhotoCropperScene(
+                image: request.image,
+                configuration: request.configuration,
+                onCancel: {
+                    activePhotoCropRequest = nil
+                },
+                onSave: { croppedImage in
+                    switch request.kind {
+                    case .teamLogo:
+                        saveTeamLogo(croppedImage)
+                    case .chatAttachment:
+                        break
+                    }
+                    activePhotoCropRequest = nil
+                }
+            )
+        }
+        .overlay {
+            if isPreparingTeamLogoPhoto {
+                ZStack {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea()
+                    ProgressView("Preparing photo...")
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(AppTheme.Palette.elevatedSurface)
+                        )
+                }
+            }
+        }
+        .alert("Photo Error", isPresented: Binding(
+            get: { teamLogoPhotoErrorMessage != nil },
+            set: { shouldPresent in
+                if !shouldPresent { teamLogoPhotoErrorMessage = nil }
+            }
+        )) {
+            Button("OK", role: .cancel) {
+                teamLogoPhotoErrorMessage = nil
+            }
+        } message: {
+            Text(teamLogoPhotoErrorMessage ?? "Could not load photo.")
         }
         .navigationDestination(item: $selectedAthleteRoute) { route in
             AthleteDetailScene(
@@ -346,9 +617,53 @@ struct TeamScene: View {
                 athleteID: route.id,
                 isEditable: role == .coach,
                 onSave: {
-                    await syncLocalTeamToRemote()
+                    Task {
+                        await syncLocalTeamToRemote()
+                    }
                 }
             )
+        }
+        .navigationDestination(item: $selectedChatThreadRoute) { route in
+            switch route {
+            case .teamChat:
+                TeamChatPanel(
+                    viewModel: chatViewModel,
+                    currentUserID: currentUserID,
+                    photoURLForUserID: avatarURL(forUserID:)
+                )
+                    .navigationTitle("Team Chat")
+                    .navigationBarTitleDisplayMode(.inline)
+            case .announcements:
+                AnnouncementsThreadScene(
+                    role: role,
+                    announcementsViewModel: announcementsViewModel,
+                    commentsStore: announcementCommentsStore,
+                    photoURLForUserID: avatarURL(forUserID:),
+                    showAnnouncementComposer: $showAnnouncementComposer
+                )
+            case .directMessages:
+                DirectMessagesScene(
+                    currentUserID: currentUserID,
+                    viewModel: directMessagesViewModel,
+                    summaries: directMessagesViewModel.conversationSummaries,
+                    photoURLForUserID: avatarURL(forUserID:),
+                    onLoadConversation: { participantID in
+                        Task { await directMessagesViewModel.refreshMessages(participantID: participantID) }
+                    },
+                    onOpenConversation: { participantID in
+                        Task { await directMessagesViewModel.markConversationRead(participantID: participantID) }
+                    }
+                )
+            }
+        }
+        .onChange(of: localStore.athletes) { _, _ in
+            directMessagesViewModel.setParticipants(dmParticipants)
+        }
+        .onChange(of: userPhotoURLsByUserID) { _, _ in
+            directMessagesViewModel.setParticipants(dmParticipants)
+        }
+        .onChange(of: remoteRosterMembers) { _, _ in
+            directMessagesViewModel.setParticipants(dmParticipants)
         }
         .onChange(of: section) { _, next in
             guard next == .roster else { return }
@@ -375,20 +690,27 @@ struct TeamScene: View {
     }
 
     private var topNavigationBar: some View {
-        HStack(spacing: 12) {
-            Color.clear
-                .frame(width: 34, height: 34)
-
-            Spacer(minLength: 8)
-
+        ZStack {
             Text("Team")
-                .font(.headline.weight(.semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(AppTheme.Palette.textPrimary)
 
-            Spacer(minLength: 8)
+            HStack {
+                Color.clear
+                    .frame(width: 34, height: 34)
 
-            Color.clear
-                .frame(width: 34, height: 34)
+                Spacer(minLength: 0)
+
+                Button {
+                    showTeamSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(AppTheme.Palette.textPrimary)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, AppTheme.Metrics.screenPadding)
         .padding(.top, 4)
@@ -401,8 +723,6 @@ struct TeamScene: View {
 
     private var floatingAction: (() -> Void)? {
         switch section {
-        case .overview:
-            return { showAnnouncementComposer = true }
         case .roster:
             switch rosterSection {
             case .athletes:
@@ -468,7 +788,8 @@ struct TeamScene: View {
                             NavigationLink {
                                 AnnouncementDetailScene(
                                     announcement: announcement,
-                                    commentsStore: announcementCommentsStore
+                                    commentsStore: announcementCommentsStore,
+                                    photoURLForUserID: avatarURL(forUserID:)
                                 )
                             } label: {
                                 VStack(alignment: .leading, spacing: 8) {
@@ -477,7 +798,14 @@ struct TeamScene: View {
                                     Text(announcement.body)
                                         .font(.body)
                                     HStack {
-                                        Text(announcement.authorName)
+                                        HStack(spacing: 8) {
+                                            AthleteListAvatar(
+                                                name: announcement.authorName,
+                                                photoURL: avatarURL(forUserID: announcement.authorUserID),
+                                                size: 20
+                                            )
+                                            Text(announcement.authorName)
+                                        }
                                         Spacer()
                                         Text(SocialTimestampFormatter.string(for: announcement.createdAt))
                                     }
@@ -496,12 +824,18 @@ struct TeamScene: View {
         }
         .refreshable {
             await syncRemoteTeamState()
+            await refreshRosterProfilePhotos()
             await loadRemoteTeamBranding()
             await announcementsViewModel.refresh()
         }
     }
 
     private var displayTeamName: String {
+        let override = teamNameOverride.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !override.isEmpty {
+            return override
+        }
+
         let trimmed = teamName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? "Your Team" : trimmed
     }
@@ -517,14 +851,31 @@ struct TeamScene: View {
     }
 
     private func loadTeamLogoPhotoItem(_ item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data) else {
-            return
+        await MainActor.run {
+            isPreparingTeamLogoPhoto = true
+            teamLogoPhotoErrorMessage = nil
+        }
+        defer {
+            Task { @MainActor in
+                isPreparingTeamLogoPhoto = false
+            }
         }
 
-        await MainActor.run {
-            saveTeamLogo(image)
-            teamLogoPickerItem = nil
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                throw APIError.decoding("Could not read selected photo.")
+            }
+
+            await MainActor.run {
+                activePhotoCropRequest = TeamPhotoCropRequest(image: image, kind: .teamLogo)
+                teamLogoPickerItem = nil
+            }
+        } catch {
+            await MainActor.run {
+                teamLogoPhotoErrorMessage = error.localizedDescription
+                teamLogoPickerItem = nil
+            }
         }
     }
 
@@ -573,176 +924,221 @@ struct TeamScene: View {
     }
 
     private var rosterContent: some View {
-        Group {
-            if role == .athlete {
-                rosterAthletesList
-            } else {
-                VStack(spacing: 0) {
-                    Picker("Roster Section", selection: $rosterSection) {
-                        ForEach(RosterSection.allCases, id: \.self) { option in
-                            Text(option.rawValue)
-                                .tag(option)
+        ScrollView {
+            VStack(spacing: 0) {
+                if role == .athlete {
+                    TeamIdentityCard(
+                        teamName: displayTeamName,
+                        teamCode: displayTeamCode,
+                        logoImage: teamLogoImage,
+                        canRemoveLogo: !teamLogoData.isEmpty,
+                        canUseCamera: UIImagePickerController.isSourceTypeAvailable(.camera),
+                        onChoosePhoto: {
+                            showTeamLogoPhotoLibrary = true
+                        },
+                        onTakePhoto: {
+                            showTeamLogoCamera = true
+                        },
+                        onRemoveLogo: {
+                            removeTeamLogo()
                         }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    )
                     .padding(.horizontal, AppTheme.Metrics.screenPadding)
                     .padding(.top, 10)
                     .padding(.bottom, 8)
 
-                    Group {
-                        switch rosterSection {
-                        case .athletes:
-                            rosterAthletesList
-                        case .groups:
-                            rosterGroupsList
-                        case .attendance:
-                            rosterAttendanceList
+                    rosterAthletesList
+                        .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                        .padding(.top, 10)
+                        .padding(.bottom, 90)
+                } else {
+                    VStack(spacing: 0) {
+                        Picker("Roster Section", selection: $rosterSection) {
+                            ForEach(RosterSection.allCases, id: \.self) { option in
+                                Text(option.rawValue)
+                                    .tag(option)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                        .padding(.top, 10)
+                        .padding(.bottom, 8)
+
+                        TeamIdentityCard(
+                            teamName: displayTeamName,
+                            teamCode: displayTeamCode,
+                            logoImage: teamLogoImage,
+                            canRemoveLogo: !teamLogoData.isEmpty,
+                            canUseCamera: UIImagePickerController.isSourceTypeAvailable(.camera),
+                            onChoosePhoto: {
+                                showTeamLogoPhotoLibrary = true
+                            },
+                            onTakePhoto: {
+                                showTeamLogoCamera = true
+                            },
+                            onRemoveLogo: {
+                                removeTeamLogo()
+                            }
+                        )
+                        .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                        .padding(.bottom, 8)
+
+                        Group {
+                            switch rosterSection {
+                            case .athletes:
+                                rosterAthletesList
+                                    .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                                    .padding(.top, 10)
+                            case .groups:
+                                rosterGroupsList
+                                    .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                                    .padding(.top, 10)
+                            case .attendance:
+                                rosterAttendanceList
+                                    .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                                    .padding(.top, 10)
+                            }
+                        }
+                        .padding(.bottom, 90)
                     }
                 }
+            }
+        }
+        .refreshable {
+            await syncRemoteTeamState()
+            if role == .coach, rosterSection == .attendance {
+                await loadAttendance()
             }
         }
         .background(AppTheme.Palette.background)
     }
 
     private var rosterAthletesList: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                if localStore.athletes.isEmpty {
-                    ContentUnavailableView("No Athletes Yet", systemImage: "person.2")
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 50)
-                } else {
-                    ForEach(Array(localStore.athletes.enumerated()), id: \.element.id) { index, athlete in
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+
+        return VStack(spacing: 12) {
+            if localStore.athletes.isEmpty {
+                ContentUnavailableView("No Athletes Yet", systemImage: "person.2")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 50)
+            } else {
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(localStore.athletes) { athlete in
+                        let groupName = localStore.groups.first(where: { $0.id == athlete.groupID })?.name
                         Button {
                             selectedAthleteRoute = AthleteRoute(id: athlete.id)
                         } label: {
-                            HStack(spacing: 14) {
-                                AthleteListAvatar(name: athlete.name, photoURL: athlete.photoURL, size: 62)
+                            VStack(spacing: 4) {
+                                AthleteListAvatar(name: athlete.name, photoURL: athlete.photoURL, size: 56)
 
-                                VStack(alignment: .leading, spacing: 4) {
-                                    let groupName = localStore.groups.first(where: { $0.id == athlete.groupID })?.name
+                                Text(athlete.name)
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(AppTheme.Palette.textPrimary)
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(2)
+                                    .frame(height: 28)
+                                    .frame(maxWidth: .infinity)
 
-                                    Text(athlete.name)
-                                        .font(.title3.weight(.semibold))
-                                        .foregroundStyle(AppTheme.Palette.textPrimary)
-
-                                    if role == .coach, let groupName {
-                                        Text(groupName)
-                                            .font(.subheadline)
-                                            .foregroundStyle(AppTheme.Palette.textSecondary)
-                                    }
+                                if role == .coach {
+                                    Text(groupName ?? " ")
+                                        .font(.caption2)
+                                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                                        .lineLimit(1)
+                                        .frame(height: 11)
+                                        .frame(maxWidth: .infinity)
+                                        .opacity(groupName == nil ? 0 : 1)
                                 }
-
-                                Spacer(minLength: 0)
                             }
-                            .padding(.horizontal, AppTheme.Metrics.screenPadding)
-                            .padding(.vertical, 18)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 8)
+                            .frame(minHeight: 118, alignment: .top)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(AppTheme.Palette.elevatedSurface)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(AppTheme.Palette.border, lineWidth: 1)
+                            )
                         }
                         .buttonStyle(.plain)
-
-                        if index < localStore.athletes.count - 1 {
-                            Divider()
-                        }
                     }
                 }
             }
-            .padding(.top, 8)
-            .padding(.bottom, 90)
         }
-        .refreshable {
-            await syncRemoteTeamState()
-        }
-        .background(AppTheme.Palette.background)
     }
 
     private var rosterGroupsList: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                if localStore.groups.isEmpty {
-                    ContentUnavailableView("No Groups Yet", systemImage: "person.3.sequence")
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 50)
-                } else {
-                    ForEach(localStore.groups) { group in
-                        Button {
-                            editingGroup = group
-                        } label: {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Circle()
-                                        .fill(Color(hex: group.colorHex))
-                                        .frame(width: 10, height: 10)
-                                    Text(group.name)
-                                        .font(.headline)
-                                        .foregroundStyle(AppTheme.Palette.textPrimary)
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.bold())
-                                        .foregroundStyle(AppTheme.Palette.textSecondary)
-                                }
-                                Text("\(localStore.athletes.filter { $0.groupID == group.id }.count) athlete\(localStore.athletes.filter { $0.groupID == group.id }.count == 1 ? "" : "s")")
-                                    .font(.subheadline)
+        VStack(spacing: 14) {
+            if localStore.groups.isEmpty {
+                ContentUnavailableView("No Groups Yet", systemImage: "person.3.sequence")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 50)
+            } else {
+                ForEach(localStore.groups) { group in
+                    Button {
+                        editingGroup = group
+                    } label: {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Circle()
+                                    .fill(Color(hex: group.colorHex))
+                                    .frame(width: 10, height: 10)
+                                Text(group.name)
+                                    .font(.headline)
+                                    .foregroundStyle(AppTheme.Palette.textPrimary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.bold())
                                     .foregroundStyle(AppTheme.Palette.textSecondary)
                             }
-                            .appCard()
+                            Text("\(localStore.athletes.filter { $0.groupID == group.id }.count) athlete\(localStore.athletes.filter { $0.groupID == group.id }.count == 1 ? "" : "s")")
+                                .font(.subheadline)
+                                .foregroundStyle(AppTheme.Palette.textSecondary)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .appCard()
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(AppTheme.Metrics.screenPadding)
-            .padding(.bottom, 90)
         }
-        .refreshable {
-            await syncRemoteTeamState()
-        }
-        .background(AppTheme.Palette.background)
     }
 
     private var rosterAttendanceList: some View {
-        ScrollView {
-            VStack(spacing: 14) {
-                attendanceDateCard
+        VStack(spacing: 14) {
+            attendanceDateCard
 
-                if let attendanceErrorMessage {
-                    Text(attendanceErrorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(AppTheme.Palette.danger)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .appCard()
-                }
-
-                if isAttendanceLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Loading attendance...")
-                            .font(.subheadline)
-                            .foregroundStyle(AppTheme.Palette.textSecondary)
-                        Spacer()
-                    }
+            if let attendanceErrorMessage {
+                Text(attendanceErrorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.Palette.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .appCard()
-                }
+            }
 
-                if localStore.athletes.isEmpty {
-                    ContentUnavailableView("No Athletes Yet", systemImage: "person.2")
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 50)
-                } else {
-                    ForEach(localStore.athletes) { athlete in
-                        attendanceAthleteRow(athlete)
-                    }
+            if isAttendanceLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading attendance...")
+                        .font(.subheadline)
+                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                    Spacer()
+                }
+                .appCard()
+            }
+
+            if localStore.athletes.isEmpty {
+                ContentUnavailableView("No Athletes Yet", systemImage: "person.2")
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 50)
+            } else {
+                ForEach(localStore.athletes) { athlete in
+                    attendanceAthleteRow(athlete)
                 }
             }
-            .padding(AppTheme.Metrics.screenPadding)
-            .padding(.bottom, 90)
         }
-        .refreshable {
-            await syncRemoteTeamState()
-            await loadAttendance()
-        }
-        .background(AppTheme.Palette.background)
     }
 
     private var attendanceDateCard: some View {
@@ -1030,6 +1426,75 @@ struct TeamScene: View {
         }
     }
 
+    private func refreshRosterProfilePhotos() async {
+        do {
+            let members = try await environment.rosterService.fetchTeamRoster()
+            var mapped: [String: URL] = [:]
+            for member in members {
+                if let photoURL = member.photoURL {
+                    mapped[member.id] = photoURL
+                }
+            }
+            remoteRosterMembers = members
+            userPhotoURLsByUserID = mapped
+            await localStore.mergeRemoteRosterMembers(members)
+        } catch {
+            // Keep existing avatar cache when roster fetch is unavailable.
+        }
+    }
+
+    private func avatarURL(forUserID userID: String) -> URL? {
+        if let athletePhotoURL = localStore.athletes.first(where: { $0.remoteUserID == userID })?.photoURL {
+            return athletePhotoURL
+        }
+        return userPhotoURLsByUserID[userID]
+    }
+
+    private func restoreThreadLastSeen() {
+        guard !chatThreadLastSeenData.isEmpty else {
+            threadLastSeenByKey = [:]
+            return
+        }
+        do {
+            threadLastSeenByKey = try JSONDecoder().decode([String: Date].self, from: chatThreadLastSeenData)
+        } catch {
+            threadLastSeenByKey = [:]
+        }
+    }
+
+    private func persistThreadLastSeen() {
+        do {
+            chatThreadLastSeenData = try JSONEncoder().encode(threadLastSeenByKey)
+        } catch {
+            chatThreadLastSeenData = Data()
+        }
+    }
+
+    private func threadLastSeen(for route: ChatThreadRoute) -> Date {
+        threadLastSeenByKey[route.id] ?? .distantPast
+    }
+
+    private func markThreadSeen(_ route: ChatThreadRoute) {
+        threadLastSeenByKey[route.id] = Date()
+        persistThreadLastSeen()
+    }
+
+    private var dmParticipants: [DirectMessageParticipant] {
+        remoteRosterMembers
+            .filter { $0.id != currentUserID }
+            .map { member in
+                let displayName = member.fullName.isEmpty ? member.email : member.fullName
+                let photoURL = member.photoURL ?? avatarURL(forUserID: member.id)
+                return DirectMessageParticipant(
+                    id: member.id,
+                    name: displayName,
+                    role: member.role,
+                    photoURL: photoURL
+                )
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     private func syncLocalTeamToRemote() async {
         guard role == .coach else { return }
 
@@ -1042,7 +1507,92 @@ struct TeamScene: View {
     }
 
     private var chatContent: some View {
-        TeamChatPanel(viewModel: chatViewModel, currentUserID: currentUserID)
+        let latestAnnouncement = announcementsViewModel.announcements.max(by: { $0.createdAt < $1.createdAt })
+        let latestTeamMessage = chatViewModel.messages.last
+        let dmSummaries = directMessagesViewModel.conversationSummaries
+        let latestDM = dmSummaries.compactMap(\.latestMessage).max(by: { $0.createdAt < $1.createdAt })        
+        return ChatThreadsList(
+            items: [
+                ChatThreadInboxItem(
+                    route: .teamChat,
+                    icon: "bubble.left.and.bubble.right.fill",
+                    iconTint: AppTheme.Palette.primary,
+                    title: "Team Chat",
+                    subtitle: latestTeamMessageSubtitle(from: latestTeamMessage),
+                    timestamp: latestTeamMessage?.createdAt,
+                    hasUnread: isTeamChatUnread(latestTeamMessage)
+                ),
+                ChatThreadInboxItem(
+                    route: .announcements,
+                    icon: "megaphone.fill",
+                    iconTint: .orange,
+                    title: "Announcements",
+                    subtitle: announcementSubtitle(from: latestAnnouncement),
+                    timestamp: latestAnnouncement?.createdAt,
+                    hasUnread: isAnnouncementUnread(latestAnnouncement)
+                ),
+                ChatThreadInboxItem(
+                    route: .directMessages,
+                    icon: "person.2.fill",
+                    iconTint: AppTheme.Palette.textSecondary,
+                    title: "Direct Messages",
+                    subtitle: latestDM.map {
+                        let body = $0.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return body.isEmpty && $0.imageURL != nil
+                            ? "\($0.senderName) sent a photo"
+                            : "\($0.senderName): \(body)"
+                    } ?? "Start a direct conversation.",
+                    timestamp: latestDM?.createdAt,
+                    hasUnread: dmSummaries.contains(where: \.hasUnreadIncoming)
+                )
+            ],
+            onSelect: { route in
+                if route == .teamChat || route == .announcements {
+                    markThreadSeen(route)
+                }
+                if route == .directMessages {
+                    Task {
+                        await directMessagesViewModel.refreshConversations()
+                    }
+                }
+                selectedChatThreadRoute = route
+            }
+        )
+    }
+
+    private func latestTeamMessageSubtitle(from latestTeamMessage: ChatMessage?) -> String {
+        guard let latestTeamMessage else {
+            return "Start the conversation with your team."
+        }
+
+        if latestTeamMessage.isPhotoOnly {
+            return "\(latestTeamMessage.senderName) sent a photo"
+        }
+
+        let body = latestTeamMessage.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty {
+            return "New message"
+        }
+        return body
+    }
+
+    private func announcementSubtitle(from latestAnnouncement: Announcement?) -> String {
+        if let latestAnnouncement {
+            return "\(latestAnnouncement.authorName): \(latestAnnouncement.title)"
+        }
+        return role == .coach ? "Post updates for your team." : "Coach updates will appear here."
+    }
+
+    private func isTeamChatUnread(_ latestTeamMessage: ChatMessage?) -> Bool {
+        guard let latestTeamMessage else { return false }
+        guard latestTeamMessage.senderUserID != currentUserID else { return false }
+        return latestTeamMessage.createdAt > threadLastSeen(for: .teamChat)
+    }
+
+    private func isAnnouncementUnread(_ latestAnnouncement: Announcement?) -> Bool {
+        guard let latestAnnouncement else { return false }
+        guard latestAnnouncement.authorUserID != currentUserID else { return false }
+        return latestAnnouncement.createdAt > threadLastSeen(for: .announcements)
     }
 }
 
@@ -1050,9 +1600,281 @@ private struct AthleteRoute: Identifiable, Hashable {
     let id: String
 }
 
+private enum ChatDeliveryStatus: Equatable {
+    case sending
+    case sent
+    case failed(String)
+
+    var label: String {
+        switch self {
+        case .sending:
+            return "Sending..."
+        case .sent:
+            return "Sent"
+        case let .failed(reason):
+            return reason
+        }
+    }
+
+    var tintColor: Color {
+        switch self {
+        case .sending:
+            return AppTheme.Palette.textSecondary
+        case .sent:
+            return AppTheme.Palette.textSecondary
+        case .failed:
+            return AppTheme.Palette.danger
+        }
+    }
+}
+
+private struct DirectMessageParticipant: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let role: UserRole
+    let photoURL: URL?
+}
+
+private struct DirectMessageEntry: Codable, Identifiable, Hashable {
+    let id: String
+    let senderUserID: String
+    let senderName: String
+    let body: String
+    let imageURL: URL?
+    let createdAt: Date
+}
+
+private struct DirectMessageSummary: Identifiable, Hashable {
+    let participant: DirectMessageParticipant
+    let latestMessage: DirectMessageEntry?
+    let hasUnreadIncoming: Bool
+
+    var id: String { participant.id }
+}
+
+@MainActor
+private final class DirectMessagesViewModel: ObservableObject {
+    @Published private(set) var conversationSummaries: [DirectMessageSummary] = []
+    @Published private(set) var messagesByParticipantID: [String: [DirectMessageEntry]] = [:]
+    @Published private(set) var deliveryStatusByMessageID: [String: ChatDeliveryStatus] = [:]
+    @Published private(set) var latestOutgoingMessageIDByParticipantID: [String: String] = [:]
+    @Published private(set) var isLoading = false
+    @Published var errorMessage: String?
+    @Published var draftByParticipantID: [String: String] = [:]
+
+    private let service: any ChatServiceProtocol
+    private let currentUserID: String
+    private var participantsByID: [String: DirectMessageParticipant] = [:]
+
+    init(
+        service: any ChatServiceProtocol,
+        currentUserID: String,
+    ) {
+        self.service = service
+        self.currentUserID = currentUserID
+    }
+
+    func setParticipants(_ participants: [DirectMessageParticipant]) {
+        participantsByID = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
+        conversationSummaries = conversationSummaries.map { summary in
+            guard let updatedParticipant = participantsByID[summary.participant.id] else {
+                return summary
+            }
+            return DirectMessageSummary(
+                participant: updatedParticipant,
+                latestMessage: summary.latestMessage,
+                hasUnreadIncoming: summary.hasUnreadIncoming
+            )
+        }
+    }
+
+    func refreshConversations() async {
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            let remote = try await service.fetchDirectMessageConversations()
+            let remoteByParticipant = Dictionary(uniqueKeysWithValues: remote.map { ($0.participantUserID, $0) })
+
+            conversationSummaries = participantsByID.values
+                .map { participant in
+                    let remoteConversation = remoteByParticipant[participant.id]
+                    let latestEntry = remoteConversation?.latestMessage.map {
+                        DirectMessageEntry(
+                            id: $0.id,
+                            senderUserID: $0.senderUserID,
+                            senderName: $0.senderName,
+                            body: $0.body,
+                            imageURL: $0.imageURL,
+                            createdAt: $0.createdAt
+                        )
+                    }
+
+                    return DirectMessageSummary(
+                        participant: participant,
+                        latestMessage: latestEntry,
+                        hasUnreadIncoming: remoteConversation?.hasUnreadIncoming ?? false
+                    )
+                }
+                .sorted { lhs, rhs in
+                    let lhsDate = lhs.latestMessage?.createdAt ?? .distantPast
+                    let rhsDate = rhs.latestMessage?.createdAt ?? .distantPast
+                    if lhsDate != rhsDate {
+                        return lhsDate > rhsDate
+                    }
+                    return lhs.participant.name.localizedCaseInsensitiveCompare(rhs.participant.name) == .orderedAscending
+                }
+            errorMessage = nil
+        } catch {
+            if isTaskCancellation(error) {
+                return
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func messages(for participantID: String) -> [DirectMessageEntry] {
+        (messagesByParticipantID[participantID] ?? [])
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
+    func deliveryStatus(for messageID: String) -> ChatDeliveryStatus? {
+        deliveryStatusByMessageID[messageID]
+    }
+
+    func latestOutgoingMessageID(for participantID: String) -> String? {
+        latestOutgoingMessageIDByParticipantID[participantID]
+    }
+
+    func refreshMessages(participantID: String) async {
+        do {
+            let remote = try await service.fetchDirectMessages(withUserID: participantID)
+            messagesByParticipantID[participantID] = remote.map {
+                DirectMessageEntry(
+                    id: $0.id,
+                    senderUserID: $0.senderUserID,
+                    senderName: $0.senderName,
+                    body: $0.body,
+                    imageURL: $0.imageURL,
+                    createdAt: $0.createdAt
+                )
+            }
+            pruneStaleDeliveryStatus(for: participantID)
+            errorMessage = nil
+        } catch {
+            if isTaskCancellation(error) {
+                return
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func markConversationRead(participantID: String) async {
+        do {
+            try await service.markDirectMessagesRead(withUserID: participantID)
+            await refreshConversations()
+        } catch {
+            if isTaskCancellation(error) {
+                return
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func send(to participant: DirectMessageParticipant, attachment: ChatAttachmentUpload?) async -> Bool {
+        let draft = (draftByParticipantID[participant.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !draft.isEmpty || attachment != nil else { return false }
+
+        var pendingLocalID: String?
+        if !draft.isEmpty {
+            let localID = "local-dm-\(UUID().uuidString)"
+            pendingLocalID = localID
+            let pendingEntry = DirectMessageEntry(
+                id: localID,
+                senderUserID: currentUserID,
+                senderName: "You",
+                body: draft,
+                imageURL: nil,
+                createdAt: Date()
+            )
+            var existing = messagesByParticipantID[participant.id] ?? []
+            existing.append(pendingEntry)
+            messagesByParticipantID[participant.id] = existing.sorted { $0.createdAt < $1.createdAt }
+            deliveryStatusByMessageID[localID] = .sending
+            latestOutgoingMessageIDByParticipantID[participant.id] = localID
+        }
+
+        do {
+            let sent = try await service.sendDirectMessage(toUserID: participant.id, body: draft, attachment: attachment)
+            let entry = DirectMessageEntry(
+                id: sent.id,
+                senderUserID: sent.senderUserID,
+                senderName: sent.senderName,
+                body: sent.body,
+                imageURL: sent.imageURL,
+                createdAt: sent.createdAt
+            )
+            var nextMessages = messagesByParticipantID[participant.id] ?? []
+            if let pendingLocalID, let pendingIndex = nextMessages.firstIndex(where: { $0.id == pendingLocalID }) {
+                nextMessages[pendingIndex] = entry
+            } else {
+                nextMessages.append(entry)
+            }
+            messagesByParticipantID[participant.id] = nextMessages.sorted { $0.createdAt < $1.createdAt }
+            if let pendingLocalID {
+                deliveryStatusByMessageID[pendingLocalID] = nil
+            }
+            markSent(messageID: entry.id, participantID: participant.id)
+            draftByParticipantID[participant.id] = ""
+            await refreshConversations()
+            errorMessage = nil
+            return true
+        } catch {
+            if isTaskCancellation(error) {
+                return false
+            }
+            if let pendingLocalID {
+                markFailed(messageID: pendingLocalID, participantID: participant.id, reason: "Failed")
+            }
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func markSent(messageID: String, participantID: String) {
+        let sentMessageIDs = deliveryStatusByMessageID.compactMap { messageID, status in
+            status == .sent ? messageID : nil
+        }
+        for existingID in sentMessageIDs {
+            deliveryStatusByMessageID[existingID] = nil
+        }
+        deliveryStatusByMessageID[messageID] = .sent
+        latestOutgoingMessageIDByParticipantID[participantID] = messageID
+        pruneStaleDeliveryStatus(for: participantID)
+    }
+
+    private func markFailed(messageID: String, participantID: String, reason: String) {
+        deliveryStatusByMessageID[messageID] = .failed(reason)
+        latestOutgoingMessageIDByParticipantID[participantID] = messageID
+        pruneStaleDeliveryStatus(for: participantID)
+    }
+
+    private func pruneStaleDeliveryStatus(for participantID: String) {
+        let knownMessageIDs = Set((messagesByParticipantID[participantID] ?? []).map(\.id))
+        deliveryStatusByMessageID = deliveryStatusByMessageID.filter { key, _ in
+            knownMessageIDs.contains(key) || !key.hasPrefix("local-dm-")
+        }
+        if let latest = latestOutgoingMessageIDByParticipantID[participantID], !knownMessageIDs.contains(latest) {
+            latestOutgoingMessageIDByParticipantID[participantID] = nil
+        }
+    }
+}
+
 private struct TeamChatPanel: View {
     @ObservedObject var viewModel: TeamChatViewModel
     let currentUserID: String
+    let photoURLForUserID: (String) -> URL?
 
     @FocusState private var isComposerFocused: Bool
     @State private var lastKeyboardAnimationDuration = 0.25
@@ -1061,6 +1883,9 @@ private struct TeamChatPanel: View {
     @State private var showPhotoLibrary = false
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var showCameraPicker = false
+    @State private var isPreparingAttachmentPhoto = false
+    @State private var attachmentPhotoErrorMessage: String?
+    @State private var messageSwipeRevealOffset: CGFloat = 0
 
     private let bottomAnchorID = "team-chat-bottom-anchor"
 
@@ -1074,6 +1899,14 @@ private struct TeamChatPanel: View {
                     .padding(.top, 12)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let attachmentPhotoErrorMessage {
+                Text(attachmentPhotoErrorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(AppTheme.Palette.danger)
+                    .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                    .padding(.top, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -1083,8 +1916,19 @@ private struct TeamChatPanel: View {
                                 .frame(maxWidth: .infinity)
                                 .frame(minHeight: 240)
                         } else {
-                            ForEach(viewModel.messages) { message in
-                                ChatBubbleRow(message: message, currentUserID: currentUserID)
+                            ForEach(Array(viewModel.messages.enumerated()), id: \.element.id) { index, message in
+                                if shouldShowTimestamp(for: index) {
+                                    ChatTimestampSeparator(
+                                        text: ChatTimestampSeparatorFormatter.string(for: message.createdAt)
+                                    )
+                                }
+                                ChatBubbleRow(
+                                    message: message,
+                                    currentUserID: currentUserID,
+                                    senderPhotoURL: photoURLForUserID(message.senderUserID),
+                                    deliveryStatus: outgoingStatus(for: message),
+                                    swipeRevealOffset: messageSwipeRevealOffset
+                                )
                                     .id(message.id)
                             }
                         }
@@ -1098,6 +1942,26 @@ private struct TeamChatPanel: View {
                     .padding(.bottom, 0)
                     .frame(maxWidth: .infinity)
                 }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { gesture in
+                            let horizontal = gesture.translation.width
+                            let vertical = gesture.translation.height
+                            guard abs(horizontal) > abs(vertical) else { return }
+                            let reveal = min(max(0, -horizontal), 96)
+                            if messageSwipeRevealOffset != reveal {
+                                messageSwipeRevealOffset = reveal
+                            }
+                        }
+                        .onEnded { _ in
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                messageSwipeRevealOffset = 0
+                            }
+                        }
+                    ,
+                    including: .gesture
+                )
+                .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     composer(proxy: proxy)
@@ -1105,8 +1969,16 @@ private struct TeamChatPanel: View {
                 .onAppear {
                     scrollToLatest(using: proxy, animated: false)
                 }
+                .task {
+                    await viewModel.refresh()
+                    scrollToLatest(using: proxy, animated: false)
+                }
                 .onChange(of: viewModel.messages.count) { _, _ in
                     scrollToLatest(using: proxy, animated: true)
+                }
+                .onChange(of: viewModel.isLoading) { _, isLoading in
+                    guard !isLoading else { return }
+                    scrollToLatest(using: proxy, animated: false)
                 }
                 .onChange(of: isComposerFocused) { _, focused in
                     guard focused else { return }
@@ -1140,151 +2012,47 @@ private struct TeamChatPanel: View {
             }
             .ignoresSafeArea()
         }
+        .overlay {
+            if isPreparingAttachmentPhoto {
+                ZStack {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea()
+                    ProgressView("Preparing photo...")
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(AppTheme.Palette.elevatedSurface)
+                        )
+                }
+            }
+        }
     }
 
     private func composer(proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let pendingAttachment {
-                HStack {
-                    ZStack(alignment: .topTrailing) {
-                        Image(uiImage: pendingAttachment.image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 88, height: 88)
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(AppTheme.Palette.border, lineWidth: 1)
-                            )
-
-                        Button {
-                            self.pendingAttachment = nil
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 22, weight: .bold))
-                                .foregroundStyle(.white, Color.black.opacity(0.6))
-                        }
-                        .offset(x: 8, y: -8)
+        ChatComposerBar(
+            draft: $viewModel.draft,
+            pendingAttachment: $pendingAttachment,
+            showAttachmentPopover: $showAttachmentPopover,
+            composerFocus: $isComposerFocused,
+            isPreparingAttachmentPhoto: isPreparingAttachmentPhoto,
+            onChoosePhoto: {
+                showPhotoLibrary = true
+            },
+            onTakePhoto: {
+                showCameraPicker = true
+            },
+            onSend: {
+                Task {
+                    let attachment = pendingAttachment?.upload
+                    let didSend = await viewModel.send(attachment: attachment)
+                    if didSend {
+                        pendingAttachment = nil
+                        scrollToLatest(using: proxy, animated: true)
                     }
-
-                    Spacer()
                 }
-                .padding(.horizontal, 44)
             }
-
-            HStack(alignment: .center, spacing: 10) {
-                Button {
-                    showAttachmentPopover = true
-                } label: {
-                    Circle()
-                        .fill(AppTheme.Palette.elevatedSurface)
-                        .frame(width: 34, height: 34)
-                        .overlay {
-                            Image(systemName: "plus")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(AppTheme.Palette.textSecondary)
-                        }
-                        .overlay(
-                            Circle()
-                                .stroke(AppTheme.Palette.border, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-                .popover(isPresented: $showAttachmentPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Button {
-                            showAttachmentPopover = false
-                            showPhotoLibrary = true
-                        } label: {
-                            Label("Choose Photo", systemImage: "photo.on.rectangle")
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-
-                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                            Button {
-                                showAttachmentPopover = false
-                                showCameraPicker = true
-                            } label: {
-                                Label("Take Photo", systemImage: "camera")
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                        }
-
-                        if pendingAttachment != nil {
-                            Divider()
-                            Button(role: .destructive) {
-                                showAttachmentPopover = false
-                                pendingAttachment = nil
-                            } label: {
-                                Label("Remove Photo", systemImage: "trash")
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                        }
-                    }
-                    .frame(minWidth: 210)
-                    .padding(.vertical, 6)
-                    .presentationCompactAdaptation(.popover)
-                }
-
-                HStack(alignment: .center, spacing: 8) {
-                    TextField("Send a message", text: $viewModel.draft)
-                        .focused($isComposerFocused)
-                        .font(.system(size: 16))
-                        .textInputAutocapitalization(.sentences)
-                        .autocorrectionDisabled(false)
-                        .submitLabel(.send)
-                        .onSubmit {
-                            guard canSend else { return }
-                            Task {
-                                let attachment = pendingAttachment?.upload
-                                let didSend = await viewModel.send(attachment: attachment)
-                                if didSend {
-                                    pendingAttachment = nil
-                                    scrollToLatest(using: proxy, animated: true)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Button {
-                        Task {
-                            let attachment = pendingAttachment?.upload
-                            let didSend = await viewModel.send(attachment: attachment)
-                            if didSend {
-                                pendingAttachment = nil
-                                scrollToLatest(using: proxy, animated: true)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(canSend ? AppTheme.Palette.primary : AppTheme.Palette.textSecondary.opacity(0.45))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend)
-                }
-                .padding(.leading, 12)
-                .padding(.trailing, 8)
-                .frame(height: 38)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(AppTheme.Palette.elevatedSurface)
-                )
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(AppTheme.Palette.border, lineWidth: 1)
-                )
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 6)
+        )
     }
 
     private func scrollToLatest(using proxy: ScrollViewProxy, animated: Bool, duration: Double = 0.22) {
@@ -1299,19 +2067,32 @@ private struct TeamChatPanel: View {
         }
     }
 
-    private var canSend: Bool {
-        pendingAttachment != nil || !viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private func loadPhotoItem(_ item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data) else {
-            return
+        await MainActor.run {
+            isPreparingAttachmentPhoto = true
+            attachmentPhotoErrorMessage = nil
+        }
+        defer {
+            Task { @MainActor in
+                isPreparingAttachmentPhoto = false
+            }
         }
 
-        await MainActor.run {
-            pendingAttachment = makeAttachment(from: image)
-            photoPickerItem = nil
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                throw APIError.decoding("Could not read selected photo.")
+            }
+
+            await MainActor.run {
+                pendingAttachment = makeAttachment(from: image)
+                photoPickerItem = nil
+            }
+        } catch {
+            await MainActor.run {
+                attachmentPhotoErrorMessage = error.localizedDescription
+                photoPickerItem = nil
+            }
         }
     }
 
@@ -1322,6 +2103,562 @@ private struct TeamChatPanel: View {
             upload: ChatAttachmentUpload(
                 data: data,
                 filename: "chat-photo-\(UUID().uuidString).jpg",
+                mimeType: "image/jpeg"
+            )
+        )
+    }
+
+    private func shouldShowTimestamp(for index: Int) -> Bool {
+        guard viewModel.messages.indices.contains(index) else { return false }
+        guard index > 0 else { return true }
+
+        let current = viewModel.messages[index].createdAt
+        let previous = viewModel.messages[index - 1].createdAt
+        return current.timeIntervalSince(previous) >= 3600
+    }
+
+    private func outgoingStatus(for message: ChatMessage) -> ChatDeliveryStatus? {
+        guard message.senderUserID == currentUserID else { return nil }
+        guard let status = viewModel.deliveryStatus(for: message) else { return nil }
+        if case .failed = status {
+            return status
+        }
+        if viewModel.latestOutgoingMessageID == message.id {
+            return status
+        }
+        return nil
+    }
+}
+
+private struct ChatThreadInboxItem: Identifiable, Hashable {
+    let route: TeamScene.ChatThreadRoute
+    let icon: String
+    let iconTint: Color
+    let title: String
+    let subtitle: String
+    let timestamp: Date?
+    let hasUnread: Bool
+
+    var id: String { route.id }
+}
+
+private struct ChatThreadsList: View {
+    let items: [ChatThreadInboxItem]
+    let onSelect: (TeamScene.ChatThreadRoute) -> Void
+
+    var body: some View {
+        let orderedItems = items.sorted { lhs, rhs in
+            let lhsDate = lhs.timestamp ?? .distantPast
+            let rhsDate = rhs.timestamp ?? .distantPast
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+
+        ScrollView {
+            VStack(spacing: 12) {
+                ForEach(orderedItems) { item in
+                    Button {
+                        onSelect(item.route)
+                    } label: {
+                        threadRow(item: item)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(AppTheme.Metrics.screenPadding)
+            .padding(.bottom, 90)
+        }
+        .background(AppTheme.Palette.background)
+        .refreshable {}
+    }
+
+    private func threadRow(item: ChatThreadInboxItem) -> some View {
+        HStack(spacing: 12) {
+            Circle()
+                .fill(item.iconTint.opacity(0.16))
+                .frame(width: 42, height: 42)
+                .overlay {
+                    Image(systemName: item.icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(item.iconTint)
+                }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.headline)
+                    .foregroundStyle(AppTheme.Palette.textPrimary)
+                Text(item.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                if item.hasUnread {
+                    Circle()
+                        .fill(AppTheme.Palette.primary)
+                        .frame(width: 8, height: 8)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+            }
+        }
+        .appCard()
+    }
+}
+
+private struct AnnouncementsThreadScene: View {
+    let role: UserRole
+    @ObservedObject var announcementsViewModel: TeamAnnouncementsViewModel
+    @ObservedObject var commentsStore: AnnouncementCommentsStore
+    let photoURLForUserID: (String) -> URL?
+    @Binding var showAnnouncementComposer: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if let errorMessage = announcementsViewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.Palette.danger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .appCard()
+                }
+
+                if announcementsViewModel.announcements.isEmpty && !announcementsViewModel.isLoading {
+                    ContentUnavailableView(
+                        "No Announcements Yet",
+                        systemImage: "megaphone",
+                        description: Text(role == .coach ? "Post one using the New button." : "Coach updates will appear here.")
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    ForEach(announcementsViewModel.announcements) { announcement in
+                        NavigationLink {
+                            AnnouncementDetailScene(
+                                announcement: announcement,
+                                commentsStore: commentsStore,
+                                photoURLForUserID: photoURLForUserID
+                            )
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(announcement.title)
+                                    .font(.headline)
+                                Text(announcement.body)
+                                    .font(.body)
+                                HStack {
+                                    HStack(spacing: 8) {
+                                        AthleteListAvatar(
+                                            name: announcement.authorName,
+                                            photoURL: photoURLForUserID(announcement.authorUserID),
+                                            size: 20
+                                        )
+                                        Text(announcement.authorName)
+                                    }
+                                    Spacer()
+                                    Text(SocialTimestampFormatter.string(for: announcement.createdAt))
+                                }
+                                .font(.footnote)
+                                .foregroundStyle(AppTheme.Palette.textSecondary)
+                            }
+                            .appCard()
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(AppTheme.Metrics.screenPadding)
+            .padding(.bottom, 90)
+        }
+        .background(AppTheme.Palette.background)
+        .navigationTitle("Announcements")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if role == .coach {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("New") {
+                        showAnnouncementComposer = true
+                    }
+                    .fontWeight(.bold)
+                }
+            }
+        }
+        .refreshable {
+            await announcementsViewModel.refresh()
+        }
+    }
+}
+
+private struct DirectMessagesScene: View {
+    let currentUserID: String
+    @ObservedObject var viewModel: DirectMessagesViewModel
+    let summaries: [DirectMessageSummary]
+    let photoURLForUserID: (String) -> URL?
+    let onLoadConversation: (String) -> Void
+    let onOpenConversation: (String) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                if summaries.isEmpty {
+                    ContentUnavailableView(
+                        "No Direct Messages Yet",
+                        systemImage: "person.2",
+                        description: Text("Start a conversation with someone on your team.")
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    ForEach(summaries) { summary in
+                        NavigationLink {
+                            DirectMessageConversationScene(
+                                currentUserID: currentUserID,
+                                viewModel: viewModel,
+                                participant: summary.participant,
+                                draft: Binding(
+                                    get: { viewModel.draftByParticipantID[summary.participant.id] ?? "" },
+                                    set: { viewModel.draftByParticipantID[summary.participant.id] = $0 }
+                                )
+                            )
+                            .onAppear {
+                                onLoadConversation(summary.participant.id)
+                                onOpenConversation(summary.participant.id)
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                AthleteListAvatar(
+                                    name: summary.participant.name,
+                                    photoURL: summary.participant.photoURL ?? photoURLForUserID(summary.participant.id),
+                                    size: 42
+                                )
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(summary.participant.name)
+                                        .font(.headline)
+                                        .foregroundStyle(AppTheme.Palette.textPrimary)
+                                    Text({
+                                        guard let latest = summary.latestMessage else { return "Say hi" }
+                                        let body = latest.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        if body.isEmpty, latest.imageURL != nil {
+                                            return "Sent a photo"
+                                        }
+                                        return body
+                                    }())
+                                        .font(.subheadline)
+                                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer(minLength: 0)
+
+                                HStack(spacing: 10) {
+                                    if summary.hasUnreadIncoming {
+                                        Circle()
+                                            .fill(AppTheme.Palette.primary)
+                                            .frame(width: 8, height: 8)
+                                    }
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                                }
+                            }
+                            .appCard()
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(AppTheme.Metrics.screenPadding)
+            .padding(.bottom, 90)
+        }
+        .background(AppTheme.Palette.background)
+        .navigationTitle("Direct Messages")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct DirectMessageConversationScene: View {
+    let currentUserID: String
+    @ObservedObject var viewModel: DirectMessagesViewModel
+    let participant: DirectMessageParticipant
+    @Binding var draft: String
+
+    @FocusState private var isComposerFocused: Bool
+    @State private var pendingAttachment: ChatComposerAttachment?
+    @State private var showAttachmentPopover = false
+    @State private var showPhotoLibrary = false
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var showCameraPicker = false
+    @State private var isPreparingAttachmentPhoto = false
+    @State private var attachmentPhotoErrorMessage: String?
+
+    private let bottomAnchorID = "dm-chat-bottom-anchor"
+
+    private var messages: [DirectMessageEntry] {
+        viewModel.messages(for: participant.id)
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        if messages.isEmpty {
+                            ContentUnavailableView(
+                                "No Messages Yet",
+                                systemImage: "bubble.left.and.bubble.right",
+                                description: Text("Send the first DM to \(participant.name).")
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                        } else {
+                            ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                                if shouldShowTimestamp(for: index) {
+                                    ChatTimestampSeparator(
+                                        text: ChatTimestampSeparatorFormatter.string(for: message.createdAt)
+                                    )
+                                }
+
+                                directMessageBubble(message)
+                            }
+                        }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(bottomAnchorID)
+                    }
+                    .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                    .padding(.top, 10)
+                    .padding(.bottom, 16)
+                }
+
+                if let attachmentPhotoErrorMessage {
+                    Text(attachmentPhotoErrorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.Palette.danger)
+                        .padding(.horizontal, AppTheme.Metrics.screenPadding)
+                        .padding(.bottom, 4)
+                }
+
+                composer(proxy: proxy)
+            }
+            .background(AppTheme.Palette.background)
+            .onAppear {
+                scrollToLatest(using: proxy, animated: false)
+            }
+            .onChange(of: messages.map(\.id)) { _, _ in
+                scrollToLatest(using: proxy, animated: true)
+            }
+        }
+        .photosPicker(isPresented: $showPhotoLibrary, selection: $photoPickerItem, matching: .images)
+        .onChange(of: photoPickerItem) { _, newItem in
+            guard let newItem else { return }
+            Task {
+                await loadPhotoItem(newItem)
+            }
+        }
+        .sheet(isPresented: $showCameraPicker) {
+            CameraImagePicker { image in
+                pendingAttachment = makeAttachment(from: image)
+            }
+            .ignoresSafeArea()
+        }
+        .overlay {
+            if isPreparingAttachmentPhoto {
+                ZStack {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea()
+                    ProgressView("Preparing photo...")
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(AppTheme.Palette.elevatedSurface)
+                        )
+                }
+            }
+        }
+        .background(AppTheme.Palette.background)
+        .navigationTitle(participant.name)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func composer(proxy: ScrollViewProxy) -> some View {
+        ChatComposerBar(
+            draft: $draft,
+            pendingAttachment: $pendingAttachment,
+            showAttachmentPopover: $showAttachmentPopover,
+            composerFocus: $isComposerFocused,
+            isPreparingAttachmentPhoto: isPreparingAttachmentPhoto,
+            onChoosePhoto: {
+                showPhotoLibrary = true
+            },
+            onTakePhoto: {
+                showCameraPicker = true
+            },
+            onSend: {
+                Task {
+                    let attachment = pendingAttachment?.upload
+                    let didSend = await viewModel.send(to: participant, attachment: attachment)
+                    if didSend {
+                        pendingAttachment = nil
+                        scrollToLatest(using: proxy, animated: true)
+                    }
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func directMessageBubble(_ message: DirectMessageEntry) -> some View {
+        let isMine = message.senderUserID == currentUserID
+        HStack {
+            if isMine {
+                Spacer(minLength: 36)
+            }
+
+            VStack(alignment: isMine ? .trailing : .leading, spacing: 5) {
+                if let imageURL = message.imageURL {
+                    AsyncImage(url: imageURL) { phase in
+                        switch phase {
+                        case let .success(image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure:
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .fill(AppTheme.Palette.surface)
+                                Image(systemName: "photo")
+                                    .font(.system(size: 26, weight: .semibold))
+                                    .foregroundStyle(AppTheme.Palette.textSecondary)
+                            }
+                        case .empty:
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                    .fill(AppTheme.Palette.surface)
+                                ProgressView()
+                            }
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                    .frame(width: 230, height: 230)
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .stroke(AppTheme.Palette.border, lineWidth: 1)
+                    )
+                }
+
+                if !message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(message.body)
+                        .font(.body)
+                        .foregroundStyle(isMine ? Color.white : AppTheme.Palette.textPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(isMine ? AppTheme.Palette.primary : AppTheme.Palette.elevatedSurface)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(
+                                    isMine ? AppTheme.Palette.primary : AppTheme.Palette.border,
+                                    lineWidth: isMine ? 0 : 1
+                                )
+                        )
+                }
+
+                if let status = outgoingStatus(for: message), isMine {
+                    Text(status.label)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(status.tintColor)
+                        .padding(.horizontal, 2)
+                }
+            }
+
+            if !isMine {
+                Spacer(minLength: 36)
+            }
+        }
+    }
+
+    private func shouldShowTimestamp(for index: Int) -> Bool {
+        guard messages.indices.contains(index) else { return false }
+        guard index > 0 else { return true }
+        let current = messages[index].createdAt
+        let previous = messages[index - 1].createdAt
+        return current.timeIntervalSince(previous) >= 3600
+    }
+
+    private func outgoingStatus(for message: DirectMessageEntry) -> ChatDeliveryStatus? {
+        guard message.senderUserID == currentUserID else { return nil }
+        guard let status = viewModel.deliveryStatus(for: message.id) else { return nil }
+        if case .failed = status {
+            return status
+        }
+        if viewModel.latestOutgoingMessageID(for: participant.id) == message.id {
+            return status
+        }
+        return nil
+    }
+
+    private func scrollToLatest(using proxy: ScrollViewProxy, animated: Bool, duration: Double = 0.22) {
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: duration)) {
+                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            }
+        }
+    }
+
+    private func loadPhotoItem(_ item: PhotosPickerItem) async {
+        await MainActor.run {
+            isPreparingAttachmentPhoto = true
+            attachmentPhotoErrorMessage = nil
+        }
+        defer {
+            Task { @MainActor in
+                isPreparingAttachmentPhoto = false
+            }
+        }
+
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                throw APIError.decoding("Could not read selected photo.")
+            }
+
+            await MainActor.run {
+                pendingAttachment = makeAttachment(from: image)
+                photoPickerItem = nil
+            }
+        } catch {
+            await MainActor.run {
+                attachmentPhotoErrorMessage = error.localizedDescription
+                photoPickerItem = nil
+            }
+        }
+    }
+
+    private func makeAttachment(from image: UIImage) -> ChatComposerAttachment? {
+        guard let data = image.jpegData(compressionQuality: 0.88) else { return nil }
+        return ChatComposerAttachment(
+            image: image,
+            upload: ChatAttachmentUpload(
+                data: data,
+                filename: "dm-photo-\(UUID().uuidString).jpg",
                 mimeType: "image/jpeg"
             )
         )
@@ -1480,9 +2817,93 @@ private struct TeamIdentityCard: View {
     }
 }
 
+private struct TeamSettingsSheet: View {
+    let role: UserRole
+    let initialTeamName: String
+    let teamCode: String?
+    let onSaveTeamName: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var editableTeamName = ""
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Team Name")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+
+                TextField("Team name", text: $editableTeamName)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(AppTheme.Palette.elevatedSurface)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AppTheme.Palette.border, lineWidth: 1)
+                    )
+                    .disabled(role != .coach)
+                    .opacity(role == .coach ? 1 : 0.75)
+
+                if let teamCode, !teamCode.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Team Code")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AppTheme.Palette.textSecondary)
+                        Text(teamCode)
+                            .font(.body.monospaced())
+                            .foregroundStyle(AppTheme.Palette.textPrimary)
+                    }
+                    .padding(.top, 4)
+                }
+
+                if role != .coach {
+                    Text("Only coaches can edit team settings.")
+                        .font(.footnote)
+                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                        .padding(.top, 4)
+                }
+
+                Spacer()
+            }
+            .padding(AppTheme.Metrics.screenPadding)
+            .background(AppTheme.Palette.background)
+            .navigationTitle("Team Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+                if role == .coach {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Save") {
+                            let trimmed = editableTeamName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return }
+                            onSaveTeamName(trimmed)
+                            dismiss()
+                        }
+                        .fontWeight(.semibold)
+                        .disabled(editableTeamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            editableTeamName = initialTeamName
+        }
+    }
+}
+
 private struct AnnouncementDetailScene: View {
     let announcement: Announcement
     @ObservedObject var commentsStore: AnnouncementCommentsStore
+    let photoURLForUserID: (String) -> URL?
 
     @State private var draftComment = ""
     @State private var isSubmittingComment = false
@@ -1549,7 +2970,11 @@ private struct AnnouncementDetailScene: View {
     private var postCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                AthleteListAvatar(name: announcement.authorName, photoURL: nil, size: 44)
+                AthleteListAvatar(
+                    name: announcement.authorName,
+                    photoURL: photoURLForUserID(announcement.authorUserID),
+                    size: 44
+                )
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(announcement.authorName)
@@ -1577,7 +3002,7 @@ private struct AnnouncementDetailScene: View {
 
     private func commentRow(_ comment: AnnouncementComment) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            AthleteListAvatar(name: comment.authorName, photoURL: nil, size: 36)
+            AthleteListAvatar(name: comment.authorName, photoURL: photoURLForUserID(comment.authorUserID), size: 36)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
@@ -1600,13 +3025,16 @@ private struct AnnouncementDetailScene: View {
     }
 
     private var commentComposer: some View {
-        HStack(alignment: .center, spacing: 8) {
+        let composerControlHeight: CGFloat = 42
+
+        return HStack(alignment: .bottom, spacing: 8) {
             TextField("Add a comment", text: $draftComment, axis: .vertical)
                 .focused($isComposerFocused)
                 .font(.system(size: 16))
                 .textInputAutocapitalization(.sentences)
                 .autocorrectionDisabled(false)
-                .lineLimit(1...4)
+                .lineLimit(1...3)
+                .padding(.vertical, 3)
                 .submitLabel(.send)
                 .onSubmit {
                     sendComment()
@@ -1625,7 +3053,8 @@ private struct AnnouncementDetailScene: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 8)
-        .frame(height: 38)
+        .padding(.vertical, 6)
+        .frame(minHeight: composerControlHeight)
         .background(
             Capsule(style: .continuous)
                 .fill(AppTheme.Palette.elevatedSurface)
@@ -2532,65 +3961,94 @@ private struct GroupEditorSheet: View {
 private struct ChatBubbleRow: View {
     let message: ChatMessage
     let currentUserID: String
+    let senderPhotoURL: URL?
+    let deliveryStatus: ChatDeliveryStatus?
+    let swipeRevealOffset: CGFloat
 
     var body: some View {
-        HStack {
+        HStack(spacing: 6) {
             if isMine { Spacer(minLength: 40) }
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
                 if !isMine {
-                    Text(message.senderName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                    AthleteListAvatar(name: message.senderName, photoURL: senderPhotoURL, size: 28)
                 }
 
-                if let imageURL = message.imageURL {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case let .success(image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        case .failure:
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                    .fill(AppTheme.Palette.surface)
-                                Image(systemName: "photo")
-                                    .font(.system(size: 26, weight: .semibold))
-                                    .foregroundStyle(AppTheme.Palette.textSecondary)
-                            }
-                        case .empty:
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                                    .fill(AppTheme.Palette.surface)
-                                ProgressView()
-                            }
-                        @unknown default:
-                            EmptyView()
-                        }
+                VStack(alignment: isMine ? .trailing : .leading, spacing: 6) {
+                    if !isMine {
+                        Text(message.senderName)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AppTheme.Palette.textSecondary)
                     }
-                    .frame(width: 230, height: 230)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .stroke(AppTheme.Palette.border, lineWidth: 1)
-                    )
-                }
 
-                if !trimmedBody.isEmpty {
-                    Text(trimmedBody)
-                        .font(.body)
-                        .foregroundStyle(isMine ? Color.white : AppTheme.Palette.textPrimary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(isMine ? AppTheme.Palette.primary : AppTheme.Palette.elevatedSurface)
+                    if let imageURL = message.imageURL {
+                        AsyncImage(url: imageURL) { phase in
+                            switch phase {
+                            case let .success(image):
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                            case .failure:
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                        .fill(AppTheme.Palette.surface)
+                                    Image(systemName: "photo")
+                                        .font(.system(size: 26, weight: .semibold))
+                                        .foregroundStyle(AppTheme.Palette.textSecondary)
+                                }
+                            case .empty:
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                        .fill(AppTheme.Palette.surface)
+                                    ProgressView()
+                                }
+                            @unknown default:
+                                EmptyView()
+                            }
+                        }
+                        .frame(width: 230, height: 230)
+                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                                .stroke(AppTheme.Palette.border, lineWidth: 1)
                         )
+                    }
+
+                    if !trimmedBody.isEmpty {
+                        Text(trimmedBody)
+                            .font(.body)
+                            .foregroundStyle(isMine ? Color.white : AppTheme.Palette.textPrimary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .fill(isMine ? AppTheme.Palette.primary : AppTheme.Palette.elevatedSurface)
+                            )
+                    }
+
+                    if let deliveryStatus, isMine {
+                        Text(deliveryStatus.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(deliveryStatus.tintColor)
+                            .padding(.horizontal, 2)
+                    }
                 }
+                .frame(maxWidth: 240, alignment: isMine ? .trailing : .leading)
             }
-            .frame(maxWidth: 240, alignment: isMine ? .trailing : .leading)
+            .offset(x: -swipeRevealOffset)
+
+            if swipeRevealOffset > 2 {
+                Text(detailTimestamp)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AppTheme.Palette.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 84, alignment: .trailing)
+                    .opacity(min(1, swipeRevealOffset / 42))
+            }
+
             if !isMine { Spacer(minLength: 40) }
         }
+        .animation(.easeOut(duration: 0.14), value: swipeRevealOffset)
     }
 
     private var isMine: Bool {
@@ -2600,11 +4058,194 @@ private struct ChatBubbleRow: View {
     private var trimmedBody: String {
         message.body.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    private var detailTimestamp: String {
+        message.createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct ChatTimestampSeparator: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            Text(text)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AppTheme.Palette.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct ChatComposerBar: View {
+    @Binding var draft: String
+    @Binding var pendingAttachment: ChatComposerAttachment?
+    @Binding var showAttachmentPopover: Bool
+    let composerFocus: FocusState<Bool>.Binding
+    let isPreparingAttachmentPhoto: Bool
+    let onChoosePhoto: () -> Void
+    let onTakePhoto: () -> Void
+    let onSend: () -> Void
+    private let composerControlHeight: CGFloat = 42
+
+    private var canSend: Bool {
+        pendingAttachment != nil || !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            Button {
+                showAttachmentPopover = true
+            } label: {
+                Circle()
+                    .fill(AppTheme.Palette.elevatedSurface)
+                    .frame(width: composerControlHeight, height: composerControlHeight)
+                    .overlay {
+                        Image(systemName: "plus")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(AppTheme.Palette.textSecondary)
+                    }
+                    .overlay(
+                        Circle()
+                            .stroke(AppTheme.Palette.border, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(isPreparingAttachmentPhoto)
+            .popover(isPresented: $showAttachmentPopover, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button {
+                        showAttachmentPopover = false
+                        onChoosePhoto()
+                    } label: {
+                        Label("Choose Photo", systemImage: "photo.on.rectangle")
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button {
+                            showAttachmentPopover = false
+                            onTakePhoto()
+                        } label: {
+                            Label("Take Photo", systemImage: "camera")
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                    }
+
+                    if pendingAttachment != nil {
+                        Divider()
+                        Button(role: .destructive) {
+                            showAttachmentPopover = false
+                            pendingAttachment = nil
+                        } label: {
+                            Label("Remove Photo", systemImage: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                    }
+                }
+                .frame(minWidth: 210)
+                .padding(.vertical, 6)
+                .presentationCompactAdaptation(.popover)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                if let pendingAttachment {
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: pendingAttachment.image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 88, height: 88)
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(AppTheme.Palette.border, lineWidth: 1)
+                            )
+
+                        Button {
+                            self.pendingAttachment = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(.white, Color.black.opacity(0.6))
+                        }
+                        .offset(x: 8, y: -8)
+                    }
+                    .padding(.leading, 4)
+                }
+
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Send a message", text: $draft, axis: .vertical)
+                        .focused(composerFocus)
+                        .font(.system(size: 16))
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled(false)
+                        .lineLimit(1...3)
+                        .padding(.vertical, 3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Button {
+                        onSend()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(canSend ? AppTheme.Palette.primary : AppTheme.Palette.textSecondary.opacity(0.45))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend || isPreparingAttachmentPhoto)
+                }
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 8)
+            .padding(.vertical, 6)
+            .frame(minHeight: composerControlHeight)
+            .background(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(AppTheme.Palette.elevatedSurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(AppTheme.Palette.border, lineWidth: 1)
+            )
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 6)
+    }
 }
 
 private struct ChatComposerAttachment {
     let image: UIImage
     let upload: ChatAttachmentUpload
+}
+
+private struct TeamPhotoCropRequest: Identifiable {
+    enum Kind {
+        case teamLogo
+        case chatAttachment
+    }
+
+    let id = UUID()
+    let image: UIImage
+    let kind: Kind
+
+    var configuration: PhotoCropperConfiguration {
+        switch kind {
+        case .teamLogo:
+            return .teamLogo
+        case .chatAttachment:
+            return .chatAttachment
+        }
+    }
 }
 
 private struct CameraImagePicker: UIViewControllerRepresentable {

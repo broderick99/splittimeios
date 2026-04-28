@@ -8,20 +8,20 @@
 
 /* Begin PBXBuildFile section */
 		074981257AD5E129E21C5026 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F6D25597DC43AE2BDA806C /* RootView.swift */; };
-		08A34A5C6E7F8091A2B3C4D5 /* splash-logo.png in Resources */ = {isa = PBXBuildFile; fileRef = 19B2C3D4E5F60718293A4B5C /* splash-logo.png */; };
-		0A1B2C3D4E5F60718293A4B5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B2C3D4E5F60718293A4B5C6 /* Assets.xcassets */; };
 		0B48C00C1EB819759F77FEB6 /* LocalDataRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F004A34F0F38C8BCDD7AFB /* LocalDataRepository.swift */; };
 		130B8EAEF8B3CFE1653DAD4B /* SplitTimeTeamNativeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F833D98CA5E174E5623ACF8 /* SplitTimeTeamNativeApp.swift */; };
+		15A4B8436409281A18ECD1C5 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CCBE8325D99B118B3554D123 /* Assets.xcassets */; };
 		164AC68C2B5E6850972F84DC /* ScheduleUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD89B0F8F2B680FDAA349FE1 /* ScheduleUtilities.swift */; };
 		17EA3671A6EB40CAE2EB5519 /* TimerScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6104C111BA57D94F8CFEFC25 /* TimerScene.swift */; };
 		1F93C1087AE46AA5CE20F5DD /* WorkoutUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93952DC87DF70B518EF94CA6 /* WorkoutUtilities.swift */; };
 		2701CA65731AF8469DC78FFA /* ScheduleScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 063EAE1BA35F9C2C906C7713 /* ScheduleScene.swift */; };
-		393E380796527F65935C1FE6 /* ServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = E01C5BE50EC9162984807C22 /* ServiceProtocols.swift */; };
 		61A1C964D3874B8750C53AB2 /* LocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EF400FF9E8B68EDE699F7E5 /* LocalStore.swift */; };
 		65546AA0ADE8057E8FB9E2A9 /* TopTabBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 221BCDAA0A861759AE409257 /* TopTabBar.swift */; };
 		772F3B7FC2DB164D484522B8 /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A5FF11F86E2DE3C48800510 /* SessionStore.swift */; };
 		7C542FC199A39389378CF977 /* WorkoutsScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D927706E5C52F74C10F77F5 /* WorkoutsScene.swift */; };
-		8E30DD6BEDAC9BBBB71F3299 /* LiveServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A38ED3A33D10E636A8080BE /* LiveServices.swift */; };
+		7ED65E47BC01F655E4D33333 /* PhotoCropper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F223D4F1B6B8ACCCFC58C32 /* PhotoCropper.swift */; };
+		84D0AC89C744E5E8489C643C /* LiveServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34197238CDFF0A6C0864FF73 /* LiveServices.swift */; };
+		8AB32EE5494FAE507739BBDD /* ServiceProtocols.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0793160E2B23E3901F9975CD /* ServiceProtocols.swift */; };
 		912A7C0A13918B715C9C576A /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D73089E2FEE233FF4B0B9C4 /* AppTheme.swift */; };
 		94F8E8826A8D64373F6B69C9 /* ScheduleEventEditorScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667B707C11885C1319659A53 /* ScheduleEventEditorScene.swift */; };
 		A66EF4E6F921ABD4529DDE8A /* WorkoutBuilderUIKitList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5536A9C131F9453BAA07D9F0 /* WorkoutBuilderUIKitList.swift */; };
@@ -30,6 +30,7 @@
 		C23C9F0D9BBEC945515F855B /* YouScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FB45E8F777B371CD0E99313 /* YouScene.swift */; };
 		C55747FDF5A61B9CBDF2843D /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1D3E6E8AFF7350341E5CEC6 /* AppEnvironment.swift */; };
 		D53B98BB9EAEC8B9CC570EB1 /* TimerRuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A58E93ECD96938DF52F48E75 /* TimerRuntimeStore.swift */; };
+		D5C213B4D8ABFBE216E6864E /* splash-logo.png in Resources */ = {isa = PBXBuildFile; fileRef = EFAF82D31D03DFE9D75A117F /* splash-logo.png */; };
 		EACE942EFED6E14FC2B0F744 /* AuthScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD4AF87676D99AE6D4A304E /* AuthScene.swift */; };
 		F47803D1E5C8B6F3671B3197 /* TemplateEditorScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DDE0AD4E124FC1B48BBDE3E /* TemplateEditorScene.swift */; };
 		F581605567FD940EFA6F8192 /* FloatingAddButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E696FE27402C3BB3B6EFD71 /* FloatingAddButton.swift */; };
@@ -38,15 +39,15 @@
 
 /* Begin PBXFileReference section */
 		063EAE1BA35F9C2C906C7713 /* ScheduleScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleScene.swift; sourceTree = "<group>"; };
-		19B2C3D4E5F60718293A4B5C /* splash-logo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "splash-logo.png"; sourceTree = "<group>"; };
-		1A38ED3A33D10E636A8080BE /* LiveServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveServices.swift; sourceTree = "<group>"; };
-		1B2C3D4E5F60718293A4B5C6 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		0793160E2B23E3901F9975CD /* ServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceProtocols.swift; sourceTree = "<group>"; };
 		221BCDAA0A861759AE409257 /* TopTabBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopTabBar.swift; sourceTree = "<group>"; };
 		2EF400FF9E8B68EDE699F7E5 /* LocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStore.swift; sourceTree = "<group>"; };
 		2F833D98CA5E174E5623ACF8 /* SplitTimeTeamNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplitTimeTeamNativeApp.swift; sourceTree = "<group>"; };
+		34197238CDFF0A6C0864FF73 /* LiveServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveServices.swift; sourceTree = "<group>"; };
 		3699A7323F43C9F9C7146F2A /* SplitTimeTeamNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SplitTimeTeamNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3CD4AF87676D99AE6D4A304E /* AuthScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthScene.swift; sourceTree = "<group>"; };
 		47C3AA8DF2DF33D5ED6698C0 /* TeamScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamScene.swift; sourceTree = "<group>"; };
+		4F223D4F1B6B8ACCCFC58C32 /* PhotoCropper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCropper.swift; sourceTree = "<group>"; };
 		532F7954B0186BB341A2E9D1 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5536A9C131F9453BAA07D9F0 /* WorkoutBuilderUIKitList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutBuilderUIKitList.swift; sourceTree = "<group>"; };
 		5D73089E2FEE233FF4B0B9C4 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
@@ -61,20 +62,30 @@
 		93952DC87DF70B518EF94CA6 /* WorkoutUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutUtilities.swift; sourceTree = "<group>"; };
 		9DDE0AD4E124FC1B48BBDE3E /* TemplateEditorScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateEditorScene.swift; sourceTree = "<group>"; };
 		A58E93ECD96938DF52F48E75 /* TimerRuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimerRuntimeStore.swift; sourceTree = "<group>"; };
+		CCBE8325D99B118B3554D123 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CD89B0F8F2B680FDAA349FE1 /* ScheduleUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleUtilities.swift; sourceTree = "<group>"; };
-		E01C5BE50EC9162984807C22 /* ServiceProtocols.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceProtocols.swift; sourceTree = "<group>"; };
 		E3F004A34F0F38C8BCDD7AFB /* LocalDataRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataRepository.swift; sourceTree = "<group>"; };
-		E76562562F90C6A500CCB65C /* SplitTimeTeamNative.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = SplitTimeTeamNative.xcodeproj; sourceTree = SOURCE_ROOT; };
+		EFAF82D31D03DFE9D75A117F /* splash-logo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "splash-logo.png"; sourceTree = "<group>"; };
 		F1D3E6E8AFF7350341E5CEC6 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		05C9C99F4B594477D4EBE07B /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				34197238CDFF0A6C0864FF73 /* LiveServices.swift */,
+				0793160E2B23E3901F9975CD /* ServiceProtocols.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
 		12324CA0A8161E8D18924934 = {
 			isa = PBXGroup;
 			children = (
 				5B5830A81081EBEE22118F30 /* App */,
 				25EF20F2AFA6D5632ED3F2F6 /* Core */,
 				80A344F348CCE0972B26BFAB /* Features */,
+				F61EC9D5D7362A549DBE26F8 /* Services */,
 				F0BB45A4B05B127C614B8C50 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -122,11 +133,10 @@
 			isa = PBXGroup;
 			children = (
 				F1D3E6E8AFF7350341E5CEC6 /* AppEnvironment.swift */,
+				CCBE8325D99B118B3554D123 /* Assets.xcassets */,
 				90F6D25597DC43AE2BDA806C /* RootView.swift */,
+				EFAF82D31D03DFE9D75A117F /* splash-logo.png */,
 				2F833D98CA5E174E5623ACF8 /* SplitTimeTeamNativeApp.swift */,
-				1B2C3D4E5F60718293A4B5C6 /* Assets.xcassets */,
-				19B2C3D4E5F60718293A4B5C /* splash-logo.png */,
-				E76562562F90C6A500CCB65C /* SplitTimeTeamNative.xcodeproj */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -177,11 +187,6 @@
 			path = Timer;
 			sourceTree = "<group>";
 		};
-		E796D6E52F9428A900609117 /* Products */ = {
-			isa = PBXGroup;
-			name = Products;
-			sourceTree = "<group>";
-		};
 		E80B1E16825ADC85C70E8F33 /* Schedule */ = {
 			isa = PBXGroup;
 			children = (
@@ -205,6 +210,7 @@
 			children = (
 				5D73089E2FEE233FF4B0B9C4 /* AppTheme.swift */,
 				5E696FE27402C3BB3B6EFD71 /* FloatingAddButton.swift */,
+				4F223D4F1B6B8ACCCFC58C32 /* PhotoCropper.swift */,
 				221BCDAA0A861759AE409257 /* TopTabBar.swift */,
 			);
 			path = DesignSystem;
@@ -230,8 +236,6 @@
 		F61EC9D5D7362A549DBE26F8 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				1A38ED3A33D10E636A8080BE /* LiveServices.swift */,
-				E01C5BE50EC9162984807C22 /* ServiceProtocols.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -240,7 +244,7 @@
 			isa = PBXGroup;
 			children = (
 				5FB45E8F777B371CD0E99313 /* YouScene.swift */,
-				F61EC9D5D7362A549DBE26F8 /* Services */,
+				05C9C99F4B594477D4EBE07B /* Services */,
 			);
 			path = You;
 			sourceTree = "<group>";
@@ -253,7 +257,7 @@
 			buildConfigurationList = E7D64F306230F80AC45BB76A /* Build configuration list for PBXNativeTarget "SplitTimeTeamNative" */;
 			buildPhases = (
 				90200C4BB0BCE160E19D81F6 /* Sources */,
-				2A3B4C5D6E7F8091A2B3C4D5 /* Resources */,
+				D6CFE677222D8E3FEAF4A034 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -292,12 +296,6 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F0BB45A4B05B127C614B8C50 /* Products */;
 			projectDirPath = "";
-			projectReferences = (
-				{
-					ProductGroup = E796D6E52F9428A900609117 /* Products */;
-					ProjectRef = E76562562F90C6A500CCB65C /* SplitTimeTeamNative.xcodeproj */;
-				},
-			);
 			projectRoot = "";
 			targets = (
 				A8C2E39CD26BD69B80D92AA8 /* SplitTimeTeamNative */,
@@ -306,12 +304,12 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		2A3B4C5D6E7F8091A2B3C4D5 /* Resources */ = {
+		D6CFE677222D8E3FEAF4A034 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0A1B2C3D4E5F60718293A4B5 /* Assets.xcassets in Resources */,
-				08A34A5C6E7F8091A2B3C4D5 /* splash-logo.png in Resources */,
+				15A4B8436409281A18ECD1C5 /* Assets.xcassets in Resources */,
+				D5C213B4D8ABFBE216E6864E /* splash-logo.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -328,14 +326,15 @@
 				EACE942EFED6E14FC2B0F744 /* AuthScene.swift in Sources */,
 				A76042C57384C8B5F77D9026 /* DomainModels.swift in Sources */,
 				F581605567FD940EFA6F8192 /* FloatingAddButton.swift in Sources */,
-				8E30DD6BEDAC9BBBB71F3299 /* LiveServices.swift in Sources */,
+				84D0AC89C744E5E8489C643C /* LiveServices.swift in Sources */,
 				0B48C00C1EB819759F77FEB6 /* LocalDataRepository.swift in Sources */,
 				61A1C964D3874B8750C53AB2 /* LocalStore.swift in Sources */,
+				7ED65E47BC01F655E4D33333 /* PhotoCropper.swift in Sources */,
 				074981257AD5E129E21C5026 /* RootView.swift in Sources */,
 				94F8E8826A8D64373F6B69C9 /* ScheduleEventEditorScene.swift in Sources */,
 				2701CA65731AF8469DC78FFA /* ScheduleScene.swift in Sources */,
 				164AC68C2B5E6850972F84DC /* ScheduleUtilities.swift in Sources */,
-				393E380796527F65935C1FE6 /* ServiceProtocols.swift in Sources */,
+				8AB32EE5494FAE507739BBDD /* ServiceProtocols.swift in Sources */,
 				772F3B7FC2DB164D484522B8 /* SessionStore.swift in Sources */,
 				130B8EAEF8B3CFE1653DAD4B /* SplitTimeTeamNativeApp.swift in Sources */,
 				B2850BF7836D2068A0FC73A2 /* TeamScene.swift in Sources */,
@@ -477,14 +476,14 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 66HQ6S4L86;
-					GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_API_BASE_URL = "https://splitteam-api-dev.broderick99.workers.dev";
-					INFOPLIST_KEY_CFBundleDisplayName = "SplitTime Team";
-					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
-					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = "com.cooperostler.SplitTimeTeamNative.auth";
-					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = splittimeteamnative;
-					INFOPLIST_KEY_NSCameraUsageDescription = "SplitTime Team uses the camera so you can share photos in team chat.";
-					INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SplitTime Team uses your photo library so you can share photos in team chat.";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_API_BASE_URL = "https://splitteam-api-dev.broderick99.workers.dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "SplitTime Team";
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = com.cooperostler.SplitTimeTeamNative.auth;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = splittimeteamnative;
+				INFOPLIST_KEY_NSCameraUsageDescription = "SplitTime Team uses the camera so you can share photos in team chat.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SplitTime Team uses your photo library so you can share photos in team chat.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -507,14 +506,14 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 66HQ6S4L86;
-					GENERATE_INFOPLIST_FILE = YES;
-					INFOPLIST_KEY_API_BASE_URL = "https://splitteam-api-dev.broderick99.workers.dev";
-					INFOPLIST_KEY_CFBundleDisplayName = "SplitTime Team";
-					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
-					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = "com.cooperostler.SplitTimeTeamNative.auth";
-					INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = splittimeteamnative;
-					INFOPLIST_KEY_NSCameraUsageDescription = "SplitTime Team uses the camera so you can share photos in team chat.";
-					INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SplitTime Team uses your photo library so you can share photos in team chat.";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_API_BASE_URL = "https://splitteam-api-dev.broderick99.workers.dev";
+				INFOPLIST_KEY_CFBundleDisplayName = "SplitTime Team";
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleTypeRole = Editor;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = com.cooperostler.SplitTimeTeamNative.auth;
+				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = splittimeteamnative;
+				INFOPLIST_KEY_NSCameraUsageDescription = "SplitTime Team uses the camera so you can share photos in team chat.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SplitTime Team uses your photo library so you can share photos in team chat.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

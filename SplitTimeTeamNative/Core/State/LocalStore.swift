@@ -77,6 +77,14 @@ final class LocalStore: ObservableObject {
         )
     }
 
+    var completedWorkoutHistorySnapshot: CompletedWorkoutHistorySnapshot {
+        CompletedWorkoutHistorySnapshot(
+            workouts: workouts.filter { $0.status == .completed },
+            workoutAthletes: workoutAthletes,
+            splits: splits
+        )
+    }
+
     func applyRemoteTeamState(_ snapshot: TeamStateSnapshot) async {
         let existingByRemoteUserID: [String: Athlete] = Dictionary(
             uniqueKeysWithValues: athletes.compactMap { athlete in
@@ -213,6 +221,18 @@ final class LocalStore: ObservableObject {
         templates = snapshot.templates
         templateRepeatGroups = snapshot.repeatGroups
         templateSteps = snapshot.steps
+        await persist()
+    }
+
+    func applyRemoteCompletedWorkoutHistory(_ snapshot: CompletedWorkoutHistorySnapshot) async {
+        let remoteWorkoutIDs = Set(snapshot.workouts.map(\.id))
+        let localNonCompletedWorkouts = workouts.filter { $0.status != .completed }
+        let localCompletedUnsynced = workouts.filter { $0.status == .completed && !remoteWorkoutIDs.contains($0.id) }
+        let keepWorkoutIDs = Set((localNonCompletedWorkouts + localCompletedUnsynced).map(\.id))
+
+        workouts = localNonCompletedWorkouts + localCompletedUnsynced + snapshot.workouts
+        workoutAthletes = workoutAthletes.filter { keepWorkoutIDs.contains($0.workoutID) } + snapshot.workoutAthletes
+        splits = splits.filter { keepWorkoutIDs.contains($0.workoutID) } + snapshot.splits
         await persist()
     }
 
@@ -474,50 +494,32 @@ final class LocalStore: ObservableObject {
                 )
             )
 
-            var structuredCursor = 0
             var outputSplitNumber = 0
 
             for runtimeSplit in timer.splits {
                 outputSplitNumber += 1
-
-                if runtimeSplit.isRecoveryEnd,
-                   let structuredSteps,
-                   structuredCursor < structuredSteps.count
-                {
-                    let recoveryStep = structuredSteps[structuredCursor]
-                    splitRecords.append(
-                        Split(
-                            id: makeID(),
-                            workoutID: workoutID,
-                            athleteID: timer.athleteID,
-                            splitNumber: outputSplitNumber,
-                            elapsedMilliseconds: runtimeSplit.elapsedMilliseconds,
-                            timestamp: runtimeSplit.timestamp,
-                            isFinal: false,
-                            stepType: .recovery,
-                            stepDistanceValue: recoveryStep.distanceValue,
-                            stepDistanceUnit: recoveryStep.distanceUnit,
-                            stepLabel: recoveryStep.label
-                        )
-                    )
-                    structuredCursor += 1
-                    continue
-                }
 
                 var stepType: TemplateStepType?
                 var stepDistanceValue: Double?
                 var stepDistanceUnit: DistanceUnit?
                 var stepLabel: String?
 
-                if let structuredSteps, structuredCursor < structuredSteps.count {
-                    let step = structuredSteps[structuredCursor]
-                    if step.type == .work {
+                if let structuredSteps,
+                   let stepIndex = runtimeSplit.stepIndex,
+                   structuredSteps.indices.contains(stepIndex)
+                {
+                    let step = structuredSteps[stepIndex]
+                    if runtimeSplit.isRecoveryEnd {
+                        stepType = .recovery
+                        stepDistanceValue = step.distanceValue
+                        stepDistanceUnit = step.distanceUnit
+                        stepLabel = step.label
+                    } else if step.type == .work {
                         stepType = step.type
                         stepDistanceValue = step.distanceValue
                         stepDistanceUnit = step.distanceUnit
                         stepLabel = step.label
                     }
-                    structuredCursor += 1
                 }
 
                 splitRecords.append(
@@ -659,6 +661,7 @@ final class LocalStore: ObservableObject {
                         distanceValue: step.distanceValue,
                         distanceUnit: step.distanceUnit,
                         durationMilliseconds: step.durationMilliseconds,
+                        splitsPerStep: step.splitsPerStep,
                         label: step.label,
                         repeatGroupID: nil
                     )
@@ -685,6 +688,7 @@ final class LocalStore: ObservableObject {
                             distanceValue: step.distanceValue,
                             distanceUnit: step.distanceUnit,
                             durationMilliseconds: step.durationMilliseconds,
+                            splitsPerStep: step.splitsPerStep,
                             label: step.label,
                             repeatGroupID: group.id
                         )
@@ -753,6 +757,7 @@ final class LocalStore: ObservableObject {
                         distanceValue: step.distanceValue,
                         distanceUnit: step.distanceUnit,
                         durationMilliseconds: step.durationMilliseconds,
+                        splitsPerStep: step.splitsPerStep,
                         label: step.label
                     )
                 )
@@ -768,6 +773,7 @@ final class LocalStore: ObservableObject {
                                 distanceValue: $0.distanceValue,
                                 distanceUnit: $0.distanceUnit,
                                 durationMilliseconds: $0.durationMilliseconds,
+                                splitsPerStep: $0.splitsPerStep,
                                 label: $0.label
                             )
                         }

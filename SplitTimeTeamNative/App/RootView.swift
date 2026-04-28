@@ -111,6 +111,12 @@ private struct MainTabContainer: View {
         .task(id: session.token) {
             await bootstrapCloudStateIfNeeded()
         }
+        .onChange(of: localStore.athletes) { _, athletes in
+            timerRuntimeStore.refreshAthleteMetadata(athletes: athletes, groups: localStore.groups)
+        }
+        .onChange(of: localStore.groups) { _, groups in
+            timerRuntimeStore.refreshAthleteMetadata(athletes: localStore.athletes, groups: groups)
+        }
     }
 
     private func bootstrapCloudStateIfNeeded() async {

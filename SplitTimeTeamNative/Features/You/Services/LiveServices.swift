@@ -65,6 +65,37 @@ private extension Encodable {
     }
 }
 
+private struct MultipartField {
+    let name: String
+    let value: String
+}
+
+private func multipartBody(
+    fields: [MultipartField],
+    fileFieldName: String,
+    fileData: Data,
+    filename: String,
+    mimeType: String,
+    boundary: String
+) -> Data {
+    var data = Data()
+
+    for field in fields {
+        data.append("--\(boundary)\r\n".utf8Data)
+        data.append("Content-Disposition: form-data; name=\"\(field.name)\"\r\n\r\n".utf8Data)
+        data.append("\(field.value)\r\n".utf8Data)
+    }
+
+    data.append("--\(boundary)\r\n".utf8Data)
+    data.append("Content-Disposition: form-data; name=\"\(fileFieldName)\"; filename=\"\(filename)\"\r\n".utf8Data)
+    data.append("Content-Type: \(mimeType)\r\n\r\n".utf8Data)
+    data.append(fileData)
+    data.append("\r\n".utf8Data)
+    data.append("--\(boundary)--\r\n".utf8Data)
+
+    return data
+}
+
 private struct AuthUserDTO: Decodable {
     let id: String
     let role: UserRole
@@ -317,6 +348,7 @@ private struct AnnouncementDTO: Decodable {
     let teamId: String
     let title: String
     let body: String
+    let authorUserId: String
     let authorName: String
     let createdAt: String
 
@@ -326,6 +358,7 @@ private struct AnnouncementDTO: Decodable {
             teamID: teamId,
             title: title,
             body: body,
+            authorUserID: authorUserId,
             authorName: authorName,
             createdAt: BackendDateParser.parse(createdAt)
         )
@@ -426,6 +459,54 @@ private struct ChatMessageDTO: Decodable {
     }
 }
 
+private struct DirectMessageDTO: Decodable {
+    let id: String
+    let threadId: String
+    let teamId: String
+    let senderUserId: String
+    let senderName: String
+    let senderRole: UserRole
+    let body: String
+    let imageUrl: String?
+    let createdAt: String
+
+    func model() -> DirectMessage {
+        DirectMessage(
+            id: id,
+            threadID: threadId,
+            teamID: teamId,
+            senderUserID: senderUserId,
+            senderName: senderName,
+            senderRole: senderRole,
+            body: body,
+            imageURL: imageUrl.flatMap(URL.init(string:)),
+            createdAt: BackendDateParser.parse(createdAt)
+        )
+    }
+}
+
+private struct DirectMessageConversationDTO: Decodable {
+    let threadId: String
+    let participantUserId: String
+    let participantName: String
+    let participantRole: UserRole
+    let participantPhotoUrl: String?
+    let latestMessage: DirectMessageDTO?
+    let hasUnreadIncoming: Bool
+
+    func model() -> DirectMessageConversation {
+        DirectMessageConversation(
+            threadID: threadId,
+            participantUserID: participantUserId,
+            participantName: participantName,
+            participantRole: participantRole,
+            participantPhotoURL: participantPhotoUrl.flatMap(URL.init(string:)),
+            latestMessage: latestMessage?.model(),
+            hasUnreadIncoming: hasUnreadIncoming
+        )
+    }
+}
+
 struct LiveChatService: ChatServiceProtocol {
     private let apiClient: APIClient
 
@@ -437,6 +518,7 @@ struct LiveChatService: ChatServiceProtocol {
         try await apiClient.send(
             APIRequest<[ChatMessageDTO]>(
                 path: "/chat/messages",
+                queryItems: [URLQueryItem(name: "limit", value: "200")],
                 requiresAuth: true
             )
         ).map { $0.model() }
@@ -471,6 +553,89 @@ struct LiveChatService: ChatServiceProtocol {
         return try await apiClient.send(request).model()
     }
 
+    func fetchDirectMessageConversations() async throws -> [DirectMessageConversation] {
+        try await apiClient.send(
+            APIRequest<[DirectMessageConversationDTO]>(
+                path: "/dm/conversations",
+                requiresAuth: true
+            )
+        ).map { $0.model() }
+    }
+
+    func fetchDirectMessages(withUserID userID: String) async throws -> [DirectMessage] {
+        try await apiClient.send(
+            APIRequest<[DirectMessageDTO]>(
+                path: "/dm/messages",
+                queryItems: [URLQueryItem(name: "userId", value: userID)],
+                requiresAuth: true
+            )
+        ).map { $0.model() }
+    }
+
+    func sendDirectMessage(toUserID userID: String, body: String, attachment: ChatAttachmentUpload?) async throws -> DirectMessage {
+        if let attachment {
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var data = Data()
+            data.append("--\(boundary)\r\n".utf8Data)
+            data.append("Content-Disposition: form-data; name=\"recipientUserId\"\r\n\r\n".utf8Data)
+            data.append("\(userID)\r\n".utf8Data)
+            if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                data.append("--\(boundary)\r\n".utf8Data)
+                data.append("Content-Disposition: form-data; name=\"body\"\r\n\r\n".utf8Data)
+                data.append("\(body)\r\n".utf8Data)
+            }
+            data.append("--\(boundary)\r\n".utf8Data)
+            data.append("Content-Disposition: form-data; name=\"image\"; filename=\"\(attachment.filename)\"\r\n".utf8Data)
+            data.append("Content-Type: \(attachment.mimeType)\r\n\r\n".utf8Data)
+            data.append(attachment.data)
+            data.append("\r\n".utf8Data)
+            data.append("--\(boundary)--\r\n".utf8Data)
+
+            return try await apiClient.send(
+                APIRequest<DirectMessageDTO>(
+                    path: "/dm/messages",
+                    method: .post,
+                    headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"],
+                    body: data,
+                    requiresAuth: true
+                )
+            ).model()
+        }
+
+        struct Payload: Encodable {
+            let recipientUserId: String
+            let body: String
+        }
+
+        return try await apiClient.send(
+            APIRequest<DirectMessageDTO>(
+                path: "/dm/messages",
+                method: .post,
+                headers: ["Content-Type": "application/json; charset=utf-8"],
+                body: try Payload(recipientUserId: userID, body: body).jsonData(),
+                requiresAuth: true
+            )
+        ).model()
+    }
+
+    func markDirectMessagesRead(withUserID userID: String) async throws {
+        struct Payload: Encodable {
+            let userId: String
+        }
+
+        struct Empty: Decodable {}
+
+        _ = try await apiClient.send(
+            APIRequest<Empty>(
+                path: "/dm/read",
+                method: .post,
+                headers: ["Content-Type": "application/json; charset=utf-8"],
+                body: try Payload(userId: userID).jsonData(),
+                requiresAuth: true
+            )
+        )
+    }
+
     private func multipartBody(body: String, attachment: ChatAttachmentUpload, boundary: String) -> Data {
         var data = Data()
 
@@ -502,6 +667,7 @@ private struct RosterMemberDTO: Decodable {
     let phone: String?
     let age: Int?
     let grade: String?
+    let photoUrl: String?
 
     func model() -> TeamRosterMember {
         TeamRosterMember(
@@ -512,7 +678,8 @@ private struct RosterMemberDTO: Decodable {
             email: email,
             phone: phone,
             age: age,
-            grade: grade
+            grade: grade,
+            photoURL: photoUrl.flatMap(URL.init(string:))
         )
     }
 }
@@ -619,6 +786,28 @@ private struct TeamSyncGroupPayload: Encodable {
 private struct TeamSyncPayload: Encodable {
     let athletes: [TeamSyncAthletePayload]
     let groups: [TeamSyncGroupPayload]
+}
+
+private struct ProfilePhotoUploadResponseDTO: Decodable {
+    let photoUrl: String
+
+    func model() throws -> URL {
+        guard let url = URL(string: photoUrl) else {
+            throw APIError.decoding("Invalid profile photo URL.")
+        }
+        return url
+    }
+}
+
+private struct ProfilePhotoMetaResponseDTO: Decodable {
+    let photoUrl: String?
+
+    func model() -> URL? {
+        guard let raw = photoUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
+            return nil
+        }
+        return URL(string: raw)
+    }
 }
 
 private struct AttendanceRecordDTO: Decodable {
@@ -737,6 +926,7 @@ private struct TemplateLibraryStepDTO: Decodable {
     let distanceValue: Double?
     let distanceUnit: DistanceUnit?
     let durationMilliseconds: Int?
+    let splitsPerStep: Int?
     let label: String
     let repeatGroupId: String?
 
@@ -749,6 +939,7 @@ private struct TemplateLibraryStepDTO: Decodable {
             distanceValue: distanceValue,
             distanceUnit: distanceUnit,
             durationMilliseconds: durationMilliseconds,
+            splitsPerStep: splitsPerStep,
             label: label,
             repeatGroupID: repeatGroupId
         )
@@ -791,6 +982,7 @@ private struct TemplateLibraryStepPayload: Encodable {
     let distanceValue: Double?
     let distanceUnit: String?
     let durationMilliseconds: Int?
+    let splitsPerStep: Int?
     let label: String
     let repeatGroupId: String?
 }
@@ -847,6 +1039,88 @@ private struct TeamWorkoutPayload: Encodable {
     let athletes: [TeamWorkoutAthletePayload]
 }
 
+private struct CompletedWorkoutDTO: Decodable {
+    let id: String
+    let name: String
+    let workoutAt: Int64
+    let templateId: String?
+    let status: WorkoutStatus
+
+    func model() -> Workout {
+        Workout(
+            id: id,
+            name: name,
+            date: Date(timeIntervalSince1970: TimeInterval(workoutAt) / 1000),
+            status: status,
+            templateID: templateId
+        )
+    }
+}
+
+private struct CompletedWorkoutAthleteDTO: Decodable {
+    let workoutId: String
+    let athleteId: String
+    let groupId: String?
+    let athleteName: String
+    let groupName: String?
+    let groupColorHex: String?
+
+    func model() -> WorkoutAthlete {
+        WorkoutAthlete(
+            workoutID: workoutId,
+            athleteID: athleteId,
+            groupID: groupId,
+            athleteName: athleteName,
+            groupName: groupName,
+            groupColorHex: groupColorHex
+        )
+    }
+}
+
+private struct CompletedWorkoutSplitDTO: Decodable {
+    let id: String
+    let workoutId: String
+    let athleteId: String
+    let splitNumber: Int
+    let elapsedMilliseconds: Int
+    let timestamp: Int64
+    let isFinal: Bool
+    let stepType: TemplateStepType?
+    let stepDistanceValue: Double?
+    let stepDistanceUnit: DistanceUnit?
+    let stepLabel: String?
+
+    func model() -> Split {
+        Split(
+            id: id,
+            workoutID: workoutId,
+            athleteID: athleteId,
+            splitNumber: splitNumber,
+            elapsedMilliseconds: elapsedMilliseconds,
+            timestamp: Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000),
+            isFinal: isFinal,
+            stepType: stepType,
+            stepDistanceValue: stepDistanceValue,
+            stepDistanceUnit: stepDistanceUnit,
+            stepLabel: stepLabel
+        )
+    }
+}
+
+private struct CompletedWorkoutHistorySnapshotDTO: Decodable {
+    let workouts: [CompletedWorkoutDTO]
+    let workoutAthletes: [CompletedWorkoutAthleteDTO]
+    let splits: [CompletedWorkoutSplitDTO]
+
+    func model() -> CompletedWorkoutHistorySnapshot {
+        CompletedWorkoutHistorySnapshot(
+            workouts: workouts.map { $0.model() },
+            workoutAthletes: workoutAthletes.map { $0.model() },
+            splits: splits.map { $0.model() }
+        )
+    }
+}
+
 struct LiveTeamService: TeamServiceProtocol {
     private let apiClient: APIClient
 
@@ -901,6 +1175,55 @@ struct LiveTeamService: TeamServiceProtocol {
             )
         )
 
+        return response.model()
+    }
+
+    func uploadProfilePhoto(
+        imageData: Data,
+        filename: String,
+        mimeType: String,
+        athleteID: String?,
+        userID: String?
+    ) async throws -> URL {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        let body = multipartBody(
+            fields: [
+                athleteID.map { MultipartField(name: "athleteId", value: $0) },
+                userID.map { MultipartField(name: "userId", value: $0) },
+            ].compactMap { $0 },
+            fileFieldName: "image",
+            fileData: imageData,
+            filename: filename,
+            mimeType: mimeType,
+            boundary: boundary
+        )
+
+        let response = try await apiClient.send(
+            APIRequest<ProfilePhotoUploadResponseDTO>(
+                path: "/team/profile-photo",
+                method: .post,
+                headers: ["Content-Type": "multipart/form-data; boundary=\(boundary)"],
+                body: body,
+                requiresAuth: true
+            )
+        )
+
+        return try response.model()
+    }
+
+    func fetchProfilePhotoURL(userID: String?) async throws -> URL? {
+        var queryItems: [URLQueryItem] = []
+        if let userID, !userID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            queryItems.append(URLQueryItem(name: "userId", value: userID))
+        }
+
+        let response = try await apiClient.send(
+            APIRequest<ProfilePhotoMetaResponseDTO>(
+                path: "/team/profile-photo/meta",
+                queryItems: queryItems,
+                requiresAuth: true
+            )
+        )
         return response.model()
     }
 
@@ -988,6 +1311,7 @@ struct LiveTeamService: TeamServiceProtocol {
                     distanceValue: step.distanceValue,
                     distanceUnit: step.distanceUnit?.rawValue,
                     durationMilliseconds: step.durationMilliseconds,
+                    splitsPerStep: step.splitsPerStep,
                     label: step.label,
                     repeatGroupId: step.repeatGroupID
                 )
@@ -1011,6 +1335,17 @@ struct LiveTeamService: TeamServiceProtocol {
         try await apiClient.send(
             APIRequest<TeamBrandingDTO>(
                 path: "/team/branding",
+                requiresAuth: true
+            )
+        ).model()
+    }
+
+    func fetchCompletedWorkoutHistory(limit: Int) async throws -> CompletedWorkoutHistorySnapshot {
+        let normalizedLimit = max(1, min(limit, 300))
+        return try await apiClient.send(
+            APIRequest<CompletedWorkoutHistorySnapshotDTO>(
+                path: "/workouts/completed",
+                queryItems: [URLQueryItem(name: "limit", value: String(normalizedLimit))],
                 requiresAuth: true
             )
         ).model()
@@ -1312,10 +1647,16 @@ struct LiveIntegrationService: IntegrationServiceProtocol {
         self.apiClient = apiClient
     }
 
-    func fetchStravaStatus() async throws -> StravaConnectionStatus {
-        try await apiClient.send(
+    func fetchStravaStatus(ownerUserID: String?) async throws -> StravaConnectionStatus {
+        var queryItems: [URLQueryItem] = []
+        if let ownerUserID, !ownerUserID.isEmpty {
+            queryItems.append(URLQueryItem(name: "ownerUserId", value: ownerUserID))
+        }
+
+        return try await apiClient.send(
             APIRequest<StravaStatusDTO>(
                 path: "/integrations/strava/status",
+                queryItems: queryItems,
                 requiresAuth: true
             )
         ).model()
@@ -1332,13 +1673,20 @@ struct LiveIntegrationService: IntegrationServiceProtocol {
         return try dto.model()
     }
 
-    func syncStravaActivities() async throws -> StravaSyncResult {
-        try await apiClient.send(
+    func syncStravaActivities(ownerUserID: String?) async throws -> StravaSyncResult {
+        let body: Data
+        if let ownerUserID, !ownerUserID.isEmpty {
+            body = try JSONSerialization.data(withJSONObject: ["ownerUserId": ownerUserID])
+        } else {
+            body = Data("{}".utf8)
+        }
+
+        return try await apiClient.send(
             APIRequest<StravaSyncResultDTO>(
                 path: "/integrations/strava/sync",
                 method: .post,
                 headers: ["Content-Type": "application/json; charset=utf-8"],
-                body: Data("{}".utf8),
+                body: body,
                 requiresAuth: true
             )
         ).model()

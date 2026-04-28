@@ -29,6 +29,62 @@ private struct WeeklyOverviewPoint: Identifiable {
     var id: Int { index }
 }
 
+private actor ActivityFeedCache {
+    private let directoryURL: URL
+    private let fileManager: FileManager
+
+    init(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        directoryURL = appSupport
+            .appendingPathComponent("SplitTimeTeamNative", isDirectory: true)
+            .appendingPathComponent("ActivityFeedCache", isDirectory: true)
+    }
+
+    func load(key: String) throws -> [ActivityFeedItem] {
+        let url = fileURL(for: key)
+        guard fileManager.fileExists(atPath: url.path) else { return [] }
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder.activityFeedCacheDecoder.decode([ActivityFeedItem].self, from: data)
+    }
+
+    func save(key: String, items: [ActivityFeedItem]) throws {
+        if !fileManager.fileExists(atPath: directoryURL.path) {
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        }
+        let data = try JSONEncoder.activityFeedCacheEncoder.encode(Array(items.prefix(50)))
+        try data.write(to: fileURL(for: key), options: [.atomic])
+    }
+
+    private func fileURL(for key: String) -> URL {
+        let safeKey = key.map { character in
+            let isSafe = character.unicodeScalars.allSatisfy {
+                CharacterSet.alphanumerics.contains($0) || $0 == UnicodeScalar("-") || $0 == UnicodeScalar("_")
+            }
+            return isSafe ? character : "_"
+        }
+        return directoryURL.appendingPathComponent(String(safeKey)).appendingPathExtension("json")
+    }
+}
+
+private extension JSONEncoder {
+    static let activityFeedCacheEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }()
+}
+
+private extension JSONDecoder {
+    static let activityFeedCacheDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+}
+
 @MainActor
 private final class YouViewModel: ObservableObject {
     private let pageSize = 10
@@ -54,10 +110,13 @@ private final class YouViewModel: ObservableObject {
     private let activityService: any ActivityServiceProtocol
     private let integrationService: any IntegrationServiceProtocol
     private let rosterService: any RosterServiceProtocol
+    private let activityFeedCache = ActivityFeedCache()
     private var feedOffset = 0
     private var currentUserID = ""
     private var currentUserName = ""
     private var isCoach = false
+    private var lastAutomaticStravaSyncAt: Date?
+    private let automaticStravaSyncCooldown: TimeInterval = 30
 
     init(
         activityService: any ActivityServiceProtocol,
@@ -122,22 +181,23 @@ private final class YouViewModel: ObservableObject {
     }
 
     func refresh() async {
+        await loadCachedFeedIfAvailable(clearIfMissing: false)
+
         isLoading = true
         defer { isLoading = false }
 
         var latestError: Error?
 
         do {
-            stravaStatus = try await integrationService.fetchStravaStatus()
+            try await autoSyncStravaIfConnected(force: false)
         } catch {
             latestError = error
         }
 
         do {
             let items = try await fetchFeedPage(offset: 0)
-            feed = items
-            feedOffset = items.count
-            canLoadMore = items.count == pageSize
+            applyFeed(items)
+            await saveFeedCache(items)
             errorMessage = nil
         } catch {
             latestError = error
@@ -154,12 +214,21 @@ private final class YouViewModel: ObservableObject {
         }
     }
 
-    func refreshFeedOnly() async {
+    func refreshFeedOnly(autoSyncStrava: Bool = false, forceStravaSync: Bool = false) async {
+        await loadCachedFeedIfAvailable(clearIfMissing: false)
+
+        if autoSyncStrava {
+            do {
+                try await autoSyncStravaIfConnected(force: forceStravaSync)
+            } catch {
+                handle(error)
+            }
+        }
+
         do {
             let items = try await fetchFeedPage(offset: 0)
-            feed = items
-            feedOffset = items.count
-            canLoadMore = items.count == pageSize
+            applyFeed(items)
+            await saveFeedCache(items)
             errorMessage = nil
         } catch {
             handle(error)
@@ -173,29 +242,24 @@ private final class YouViewModel: ObservableObject {
         }
     }
 
-    func refreshActivitiesWithAutoSync() async {
+    func refreshActivitiesWithAutoSync(forceStravaSync: Bool = true) async {
+        await loadCachedFeedIfAvailable(clearIfMissing: false)
+
         isLoading = true
         defer { isLoading = false }
 
         var latestError: Error?
 
         do {
-            let status = try await integrationService.fetchStravaStatus()
-            stravaStatus = status
-
-            if status.connected {
-                let result = try await integrationService.syncStravaActivities()
-                lastSyncSummary = "Imported \(result.imported) new runs."
-            }
+            try await autoSyncStravaIfConnected(force: forceStravaSync)
         } catch {
             latestError = error
         }
 
         do {
             let items = try await fetchFeedPage(offset: 0)
-            feed = items
-            feedOffset = items.count
-            canLoadMore = items.count == pageSize
+            applyFeed(items)
+            await saveFeedCache(items)
             errorMessage = nil
         } catch {
             latestError = error
@@ -225,11 +289,7 @@ private final class YouViewModel: ObservableObject {
 
     func didCloseConnectSheet() async {
         do {
-            stravaStatus = try await integrationService.fetchStravaStatus()
-            if stravaStatus.connected {
-                let result = try await integrationService.syncStravaActivities()
-                lastSyncSummary = "Imported \(result.imported) new runs."
-            }
+            try await autoSyncStravaIfConnected(force: true)
             await refreshFeedOnly()
         } catch {
             handle(error)
@@ -237,12 +297,8 @@ private final class YouViewModel: ObservableObject {
     }
 
     func syncStrava() async {
-        isSyncing = true
-        defer { isSyncing = false }
-
         do {
-            let result = try await integrationService.syncStravaActivities()
-            lastSyncSummary = "Imported \(result.imported) new runs."
+            try await autoSyncStravaIfConnected(force: true)
             await refreshFeedOnly()
         } catch {
             handle(error)
@@ -274,6 +330,7 @@ private final class YouViewModel: ObservableObject {
             feedOffset += next.count
             canLoadMore = next.count == pageSize
             feed.append(contentsOf: next)
+            await saveFeedCache(feed)
             errorMessage = nil
         } catch {
             handle(error)
@@ -287,6 +344,47 @@ private final class YouViewModel: ObservableObject {
         }
 
         errorMessage = error.localizedDescription
+    }
+
+    private func applyFeed(_ items: [ActivityFeedItem]) {
+        feed = items
+        feedOffset = items.count
+        canLoadMore = items.count == pageSize
+    }
+
+    private func loadCachedFeedIfAvailable(clearIfMissing: Bool) async {
+        guard !currentUserID.isEmpty else { return }
+
+        do {
+            let cached = try await activityFeedCache.load(key: activityFeedCacheKey)
+            guard !cached.isEmpty else {
+                if clearIfMissing {
+                    applyFeed([])
+                }
+                return
+            }
+            applyFeed(cached)
+            errorMessage = nil
+        } catch {
+            if clearIfMissing {
+                applyFeed([])
+            }
+        }
+    }
+
+    private func saveFeedCache(_ items: [ActivityFeedItem]) async {
+        guard !currentUserID.isEmpty else { return }
+        do {
+            try await activityFeedCache.save(key: activityFeedCacheKey, items: items)
+        } catch {
+            // Feed cache is a speed optimization; network data remains authoritative.
+        }
+    }
+
+    private var activityFeedCacheKey: String {
+        let viewer = selectedViewerUserID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedViewer = viewer?.isEmpty == false ? viewer! : "me"
+        return "\(currentUserID)-\(resolvedViewer)-\(scope.rawValue)"
     }
 
     private func shouldIgnore(_ error: Error) -> Bool {
@@ -308,6 +406,40 @@ private final class YouViewModel: ObservableObject {
         }
 
         return false
+    }
+
+    private func autoSyncStravaIfConnected(force: Bool) async throws {
+        if !force,
+           let lastAutomaticStravaSyncAt,
+           Date().timeIntervalSince(lastAutomaticStravaSyncAt) < automaticStravaSyncCooldown {
+            return
+        }
+
+        guard !isSyncing else { return }
+
+        isSyncing = true
+        defer { isSyncing = false }
+
+        let ownerUserID = stravaSyncOwnerUserID
+        let status = try await integrationService.fetchStravaStatus(ownerUserID: ownerUserID)
+        stravaStatus = status
+        lastAutomaticStravaSyncAt = Date()
+
+        guard status.connected else {
+            lastSyncSummary = nil
+            return
+        }
+
+        let result = try await integrationService.syncStravaActivities(ownerUserID: ownerUserID)
+        lastSyncSummary = result.imported > 0
+            ? "Imported \(result.imported) new run\(result.imported == 1 ? "" : "s")."
+            : "Strava is up to date."
+    }
+
+    private var stravaSyncOwnerUserID: String? {
+        guard isCoach else { return nil }
+        guard let selectedViewerUserID, !selectedViewerUserID.isEmpty else { return nil }
+        return selectedViewerUserID
     }
 
     private func loadViewerOptions() async {
@@ -567,6 +699,8 @@ struct YouScene: View {
     @ObservedObject var appModel: AppModel
     @ObservedObject var localStore: LocalStore
     let environment: AppEnvironment
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("SplitTimeTeamNative.coachProfilePhotoURL") private var coachProfilePhotoURLString = ""
     @StateObject private var viewModel: YouViewModel
     @State private var isLoggingOut = false
     @State private var selectedTab: YouPrimaryTab = .overview
@@ -577,7 +711,9 @@ struct YouScene: View {
     @State private var selectedOverviewWeekIndex = 9
     @State private var selectedProfilePhotoItem: PhotosPickerItem?
     @State private var isSavingProfilePhoto = false
+    @State private var isPreparingProfilePhoto = false
     @State private var profilePhotoErrorMessage: String?
+    @State private var activePhotoCropRequest: ProfilePhotoCropRequest?
     @State private var isCoachProfileEditPresented = false
     @State private var coachEditingAthleteID: String?
     @State private var coachEditingAthleteName = ""
@@ -621,20 +757,21 @@ struct YouScene: View {
                 .padding(.top, 14)
                 .padding(.bottom, 32)
             }
-            .refreshable {
-                if selectedTab == .activities {
-                    await viewModel.refreshActivitiesWithAutoSync()
-                    if viewModel.feed.isEmpty {
-                        isActivitiesListVisible = false
+        .refreshable {
+            if selectedTab == .activities {
+                await viewModel.refreshActivitiesWithAutoSync()
+                if viewModel.feed.isEmpty {
+                    isActivitiesListVisible = false
                     } else {
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            isActivitiesListVisible = true
-                        }
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isActivitiesListVisible = true
                     }
-                } else {
-                    await viewModel.refresh()
                 }
+            } else {
+                await viewModel.refresh()
             }
+            await refreshOwnProfilePhotoFromCloud()
+        }
         }
         .background(AppTheme.Palette.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -646,6 +783,7 @@ struct YouScene: View {
             hasBootstrapped = true
             await viewModel.configure(for: session.user)
             await viewModel.refresh()
+            await refreshOwnProfilePhotoFromCloud()
             if selectedTab == .activities, !viewModel.feed.isEmpty {
                 withAnimation(.easeOut(duration: 0.18)) {
                     isActivitiesListVisible = true
@@ -659,8 +797,7 @@ struct YouScene: View {
                 if selectedTab == .activities {
                     isActivitiesListVisible = false
                 }
-                viewModel.feed = []
-                await viewModel.refreshFeedOnly()
+                await viewModel.refreshFeedOnly(autoSyncStrava: selectedTab == .activities, forceStravaSync: selectedTab == .activities)
                 if selectedTab == .activities, !viewModel.feed.isEmpty {
                     withAnimation(.easeOut(duration: 0.18)) {
                         isActivitiesListVisible = true
@@ -673,7 +810,7 @@ struct YouScene: View {
             if viewModel.feed.isEmpty {
                 isActivitiesListVisible = false
                 Task {
-                    await viewModel.refreshFeedOnly()
+                    await viewModel.refreshActivitiesWithAutoSync(forceStravaSync: true)
                     if !viewModel.feed.isEmpty {
                         withAnimation(.easeOut(duration: 0.18)) {
                             isActivitiesListVisible = true
@@ -683,6 +820,18 @@ struct YouScene: View {
             } else {
                 withAnimation(.easeOut(duration: 0.12)) {
                     isActivitiesListVisible = true
+                }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            guard selectedTab == .activities else { return }
+            Task {
+                await viewModel.refreshActivitiesWithAutoSync(forceStravaSync: false)
+                if !viewModel.feed.isEmpty {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        isActivitiesListVisible = true
+                    }
                 }
             }
         }
@@ -697,25 +846,50 @@ struct YouScene: View {
         .onChange(of: selectedProfilePhotoItem) { _, item in
             guard let item else { return }
             Task {
-                await updateOwnProfilePhoto(from: item)
-                selectedProfilePhotoItem = nil
+                await MainActor.run {
+                    isPreparingProfilePhoto = true
+                }
+                await preparePhotoCropRequest(from: item, kind: .ownProfile)
+                await MainActor.run {
+                    selectedProfilePhotoItem = nil
+                    isPreparingProfilePhoto = false
+                }
             }
         }
         .onChange(of: coachEditingPhotoItem) { _, item in
             guard let item else { return }
             Task {
-                do {
-                    guard let data = try await item.loadTransferable(type: Data.self),
-                          let normalized = normalizedProfilePhotoData(from: data) else {
-                        throw APIError.decoding("Could not read selected photo.")
-                    }
-                    coachEditingPhotoData = normalized
-                    profilePhotoErrorMessage = nil
-                } catch {
-                    profilePhotoErrorMessage = error.localizedDescription
+                await MainActor.run {
+                    isPreparingProfilePhoto = true
                 }
-                coachEditingPhotoItem = nil
+                await preparePhotoCropRequest(from: item, kind: .coachEdit)
+                await MainActor.run {
+                    coachEditingPhotoItem = nil
+                    isPreparingProfilePhoto = false
+                }
             }
+        }
+        .fullScreenCover(item: $activePhotoCropRequest) { request in
+            PhotoCropperScene(
+                image: request.image,
+                configuration: request.configuration,
+                onCancel: {
+                    activePhotoCropRequest = nil
+                },
+                onSave: { croppedImage in
+                    switch request.kind {
+                    case .ownProfile:
+                        Task {
+                            await updateOwnProfilePhoto(from: croppedImage)
+                        }
+                    case .coachEdit:
+                        coachEditingPhotoData = normalizedProfilePhotoData(from: croppedImage)
+                        coachEditingPhotoURL = nil
+                        profilePhotoErrorMessage = nil
+                    }
+                    activePhotoCropRequest = nil
+                }
+            )
         }
         .sheet(isPresented: $viewModel.showConnectSheet, onDismiss: {
             Task {
@@ -764,7 +938,7 @@ struct YouScene: View {
                         PhotosPicker(selection: $coachEditingPhotoItem, matching: .images, photoLibrary: .shared()) {
                             Label("Choose Photo", systemImage: "photo.on.rectangle")
                         }
-                        .disabled(isSavingCoachProfilePhoto)
+                        .disabled(isSavingCoachProfilePhoto || isPreparingProfilePhoto)
                     }
                 }
                 .navigationTitle("Edit Athlete")
@@ -790,42 +964,58 @@ struct YouScene: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .overlay {
+            if isPreparingProfilePhoto {
+                ZStack {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea()
+                    ProgressView("Preparing photo...")
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(AppTheme.Palette.elevatedSurface)
+                        )
+                }
+            }
+        }
     }
 
     private var topNavigationBar: some View {
-        HStack(spacing: 12) {
-            if session.user.role == .coach {
-                viewerSelectorMenu
-            } else {
-                Color.clear
-                    .frame(width: 34, height: 34)
-            }
-
-            Spacer(minLength: 8)
-
+        ZStack {
             Text("You")
-                .font(.headline.weight(.semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(AppTheme.Palette.textPrimary)
 
-            Spacer(minLength: 8)
+            HStack {
+                if session.user.role == .coach {
+                    viewerSelectorMenu
+                } else {
+                    Color.clear
+                        .frame(width: 34, height: 34)
+                }
 
-            Button {
-                isSettingsPresented = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(AppTheme.Palette.textPrimary)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        Circle()
-                            .fill(AppTheme.Palette.surface)
-                    )
-                    .overlay(
-                        Circle()
-                            .stroke(AppTheme.Palette.border, lineWidth: 1)
-                    )
+                Spacer(minLength: 0)
+
+                Button {
+                    isSettingsPresented = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(AppTheme.Palette.textPrimary)
+                        .frame(width: 34, height: 34)
+                        .offset(y: -3)
+                        .background(
+                            Circle()
+                                .fill(AppTheme.Palette.surface)
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(AppTheme.Palette.border, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, AppTheme.Metrics.screenPadding)
         .padding(.top, 4)
@@ -925,18 +1115,11 @@ struct YouScene: View {
                 }
             }
         } label: {
-            Circle()
-                .fill(AppTheme.Palette.surface)
-                .frame(width: 34, height: 34)
-                .overlay(
-                    Text(viewModel.selectedViewerInitials)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(AppTheme.Palette.textSecondary)
-                )
-                .overlay(
-                    Circle()
-                        .stroke(AppTheme.Palette.border, lineWidth: 1)
-                )
+            ProfileHeaderAvatar(
+                name: viewModel.selectedViewerName,
+                photoURL: selectedViewerPhotoURL,
+                size: 34
+            )
         }
         .menuStyle(.button)
     }
@@ -980,7 +1163,7 @@ struct YouScene: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .disabled(isSavingProfilePhoto)
+                        .disabled(isSavingProfilePhoto || isPreparingProfilePhoto)
                         .accessibilityLabel("Change profile photo")
                     }
                 }
@@ -1196,8 +1379,12 @@ struct YouScene: View {
         return "SplitTime Team"
     }
 
+    private var isViewingOwnCoachProfile: Bool {
+        session.user.role == .coach && viewModel.selectedViewerUserID == nil
+    }
+
     private var canEditOwnProfilePhoto: Bool {
-        session.user.role == .athlete
+        session.user.role == .athlete || isViewingOwnCoachProfile
     }
 
     private var canShowCoachProfileEditButton: Bool {
@@ -1223,7 +1410,18 @@ struct YouScene: View {
     }
 
     private var profilePhotoURL: URL? {
-        profileAthlete?.photoURL
+        if let photoURL = profileAthlete?.photoURL {
+            return photoURL
+        }
+
+        if isViewingOwnCoachProfile {
+            if let remoteURL = URL(string: coachProfilePhotoURLString), !coachProfilePhotoURLString.isEmpty {
+                return remoteURL
+            }
+            return persistedProfilePhotoURL(for: session.user.id)
+        }
+
+        return nil
     }
 
     private var profileAthlete: Athlete? {
@@ -1236,6 +1434,16 @@ struct YouScene: View {
         case .athlete:
             return localStore.athletes.first(where: { $0.remoteUserID == session.user.id })
         }
+    }
+
+    private var selectedViewerPhotoURL: URL? {
+        if let selectedViewerUserID = viewModel.selectedViewerUserID,
+           let member = viewModel.viewerOptions.first(where: { $0.id == selectedViewerUserID }),
+           let memberPhotoURL = member.photoURL {
+            return memberPhotoURL
+        }
+
+        return profilePhotoURL
     }
 
     private var overviewWeeklyPoints: [WeeklyOverviewPoint] {
@@ -1367,24 +1575,71 @@ struct YouScene: View {
         formattedWeekRange(overviewWeekInterval)
     }
 
-    private func updateOwnProfilePhoto(from item: PhotosPickerItem) async {
-        guard session.user.role == .athlete else { return }
+    private func preparePhotoCropRequest(from item: PhotosPickerItem, kind: ProfilePhotoCropRequest.Kind) async {
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                throw APIError.decoding("Could not read selected photo.")
+            }
+
+            await MainActor.run {
+                activePhotoCropRequest = ProfilePhotoCropRequest(image: image, kind: kind)
+                profilePhotoErrorMessage = nil
+            }
+        } catch {
+            await MainActor.run {
+                profilePhotoErrorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func updateOwnProfilePhoto(from image: UIImage) async {
+        guard canEditOwnProfilePhoto else { return }
         guard !isSavingProfilePhoto else { return }
         isSavingProfilePhoto = true
         defer { isSavingProfilePhoto = false }
 
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let photoData = normalizedProfilePhotoData(from: data) else {
+            guard let photoData = normalizedProfilePhotoData(from: image) else {
                 throw APIError.decoding("Could not read selected photo.")
             }
 
-            let athlete = try await ensureSelfAthleteProfileExists()
-            let fileURL = try persistProfilePhoto(photoData, remoteUserID: session.user.id)
-            await localStore.updateAthlete(athleteID: athlete.id, photoURL: fileURL)
+            let uploadedURL = try await environment.teamService.uploadProfilePhoto(
+                imageData: photoData,
+                filename: "profile-photo-\(UUID().uuidString).jpg",
+                mimeType: "image/jpeg",
+                athleteID: nil,
+                userID: session.user.role == .coach ? session.user.id : nil
+            )
+            if session.user.role == .athlete {
+                let athlete = try await ensureSelfAthleteProfileExists()
+                await localStore.updateAthlete(athleteID: athlete.id, photoURL: uploadedURL)
+            } else if let athlete = localStore.athletes.first(where: { $0.remoteUserID == session.user.id }) {
+                await localStore.updateAthlete(athleteID: athlete.id, photoURL: uploadedURL)
+            }
+            coachProfilePhotoURLString = uploadedURL.absoluteString
             profilePhotoErrorMessage = nil
         } catch {
             profilePhotoErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func refreshOwnProfilePhotoFromCloud() async {
+        do {
+            let remoteURL = try await environment.teamService.fetchProfilePhotoURL(userID: session.user.id)
+            if let remoteURL {
+                if let athlete = localStore.athletes.first(where: { $0.remoteUserID == session.user.id }) {
+                    await localStore.updateAthlete(athleteID: athlete.id, photoURL: remoteURL)
+                } else if session.user.role == .athlete {
+                    let athlete = try await ensureSelfAthleteProfileExists()
+                    await localStore.updateAthlete(athleteID: athlete.id, photoURL: remoteURL)
+                }
+                coachProfilePhotoURLString = remoteURL.absoluteString
+            } else {
+                coachProfilePhotoURLString = ""
+            }
+        } catch {
+            // Keep local photo when backend refresh is unavailable.
         }
     }
 
@@ -1427,9 +1682,14 @@ struct YouScene: View {
         defer { isSavingCoachProfilePhoto = false }
 
         do {
-            let identifier = coachEditingAthleteRemoteUserID ?? athleteID
-            let fileURL = try persistProfilePhoto(photoData, remoteUserID: identifier)
-            await localStore.updateAthlete(athleteID: athleteID, photoURL: fileURL)
+            let uploadedURL = try await environment.teamService.uploadProfilePhoto(
+                imageData: photoData,
+                filename: "profile-photo-\(UUID().uuidString).jpg",
+                mimeType: "image/jpeg",
+                athleteID: coachEditingAthleteRemoteUserID == nil ? athleteID : nil,
+                userID: coachEditingAthleteRemoteUserID
+            )
+            await localStore.updateAthlete(athleteID: athleteID, photoURL: uploadedURL)
             profilePhotoErrorMessage = nil
             isCoachProfileEditPresented = false
             resetCoachProfileEditor()
@@ -1458,27 +1718,37 @@ struct YouScene: View {
 
     private func persistProfilePhoto(_ photoData: Data, remoteUserID: String) throws -> URL {
         let fileManager = FileManager.default
+        let fileURL = profilePhotoFileURL(for: remoteUserID)
+        let directory = fileURL.deletingLastPathComponent()
+
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        try photoData.write(to: fileURL, options: [.atomic])
+        return fileURL
+    }
+
+    private func persistedProfilePhotoURL(for remoteUserID: String) -> URL? {
+        let fileURL = profilePhotoFileURL(for: remoteUserID)
+        return FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : nil
+    }
+
+    private func profilePhotoFileURL(for remoteUserID: String) -> URL {
+        let fileManager = FileManager.default
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         let directory = appSupport
             .appendingPathComponent("SplitTimeTeamNative", isDirectory: true)
             .appendingPathComponent("profile-photos", isDirectory: true)
 
-        if !fileManager.fileExists(atPath: directory.path) {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-
         let safeIdentifier = remoteUserID
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "_")
-        let fileURL = directory.appendingPathComponent("\(safeIdentifier).jpg")
-        try photoData.write(to: fileURL, options: [.atomic])
-        return fileURL
+        return directory.appendingPathComponent("\(safeIdentifier).jpg")
     }
 
-    private func normalizedProfilePhotoData(from data: Data) -> Data? {
-        guard let image = UIImage(data: data) else { return nil }
-
+    private func normalizedProfilePhotoData(from image: UIImage) -> Data? {
         let maxDimension: CGFloat = 900
         let originalSize = image.size
         guard originalSize.width > 0, originalSize.height > 0 else { return nil }
@@ -1538,7 +1808,7 @@ struct YouScene: View {
                             ProgressView()
                                 .progressViewStyle(.circular)
                         }
-                        Text(viewModel.stravaStatus.connected ? "Sync Runs" : "Connect Strava")
+                        Text(viewModel.stravaStatus.connected ? "Check Now" : "Connect Strava")
                             .font(.subheadline.weight(.semibold))
                     }
                     .frame(maxWidth: .infinity)
@@ -1557,7 +1827,7 @@ struct YouScene: View {
             }
 
             if !viewModel.stravaStatus.connected {
-                Text("Connect once, then pull-to-refresh or tap Sync Runs to import your GPS activities.")
+                Text("Connect once, then Split Time imports new Strava runs automatically when this page loads or refreshes.")
                     .font(.caption)
                     .foregroundStyle(AppTheme.Palette.textSecondary)
             }
@@ -1657,6 +1927,21 @@ struct YouScene: View {
         .buttonStyle(.bordered)
         .padding(.horizontal, AppTheme.Metrics.screenPadding)
         .padding(.top, 8)
+    }
+}
+
+private struct ProfilePhotoCropRequest: Identifiable {
+    enum Kind {
+        case ownProfile
+        case coachEdit
+    }
+
+    let id = UUID()
+    let image: UIImage
+    let kind: Kind
+
+    var configuration: PhotoCropperConfiguration {
+        .profile
     }
 }
 
@@ -1942,11 +2227,14 @@ private struct ActivityDiscussionScene: View {
     }
 
     private var commentComposer: some View {
-        HStack(spacing: 8) {
+        let composerControlHeight: CGFloat = 42
+
+        return HStack(alignment: .bottom, spacing: 8) {
             TextField("Add a comment", text: $viewModel.draft, axis: .vertical)
                 .font(.system(size: 16))
                 .textInputAutocapitalization(.sentences)
-                .lineLimit(1...4)
+                .lineLimit(1...3)
+                .padding(.vertical, 3)
                 .submitLabel(.send)
                 .onSubmit {
                     Task {
@@ -1972,7 +2260,8 @@ private struct ActivityDiscussionScene: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 8)
-        .frame(height: 38)
+        .padding(.vertical, 6)
+        .frame(minHeight: composerControlHeight)
         .background(
             Capsule(style: .continuous)
                 .fill(AppTheme.Palette.elevatedSurface)

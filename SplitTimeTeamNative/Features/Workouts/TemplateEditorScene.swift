@@ -158,17 +158,19 @@ struct TemplateEditorScene: View {
         }
         .alert("Delete Workout?", isPresented: $showingDeleteConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                Task {
-                    if let templateID {
-                        await localStore.deleteTemplate(templateID)
+                Button("Delete", role: .destructive) {
+                    Task {
+                        if let templateID {
+                            await localStore.deleteTemplate(templateID)
+                        }
+                        if let onPersisted {
+                            Task {
+                                await onPersisted()
+                            }
+                        }
+                        dismiss()
                     }
-                    if let onPersisted {
-                        await onPersisted()
-                    }
-                    dismiss()
                 }
-            }
         } message: {
             Text("This cannot be undone.")
         }
@@ -207,9 +209,13 @@ struct TemplateEditorScene: View {
         } else {
             _ = await localStore.createTemplate(name: trimmedName, items: items)
         }
-        await localStore.load()
+        Task {
+            await localStore.load()
+        }
         if let onPersisted {
-            await onPersisted()
+            Task {
+                await onPersisted()
+            }
         }
         dismiss()
     }
@@ -225,6 +231,7 @@ struct TemplateEditorScene: View {
                     distanceValue: 400,
                     distanceUnit: .meters,
                     durationMilliseconds: nil,
+                    splitsPerStep: 1,
                     label: ""
                 ),
                 BuilderStep(
@@ -233,6 +240,7 @@ struct TemplateEditorScene: View {
                     distanceValue: nil,
                     distanceUnit: nil,
                     durationMilliseconds: 120_000,
+                    splitsPerStep: 1,
                     label: ""
                 ),
             ]
@@ -253,6 +261,7 @@ struct TemplateEditorScene: View {
                         distanceValue: step.distanceValue,
                         distanceUnit: step.distanceUnit,
                         durationMilliseconds: step.durationMilliseconds,
+                        splitsPerStep: step.splitsPerStep,
                         label: step.label
                     )
                 ),
@@ -271,6 +280,7 @@ struct TemplateEditorScene: View {
                                 distanceValue: $0.distanceValue,
                                 distanceUnit: $0.distanceUnit,
                                 durationMilliseconds: $0.durationMilliseconds,
+                                splitsPerStep: $0.splitsPerStep,
                                 label: $0.label
                             )
                         }
@@ -316,6 +326,7 @@ struct TemplateEditorScene: View {
             distanceValue: step.distanceValue,
             distanceUnit: step.distanceUnit,
             durationMilliseconds: step.durationMilliseconds,
+            splitsPerStep: step.splitsPerStep,
             label: step.label
         )
         var nextSteps = group.steps
@@ -818,6 +829,8 @@ private struct StepEditorSheet: View {
     @State private var distanceUnit: DistanceUnit
     @State private var durationMinutes: String
     @State private var durationSeconds: String
+    @State private var splitsPerStep: Int
+    @State private var showSplitInfo = false
 
     let onSave: (BuilderStep) -> Void
 
@@ -840,6 +853,7 @@ private struct StepEditorSheet: View {
         let duration = initialStep?.durationMilliseconds ?? 0
         _durationMinutes = State(initialValue: duration > 0 ? String(duration / 60_000) : "2")
         _durationSeconds = State(initialValue: duration > 0 ? String((duration / 1_000) % 60) : "0")
+        _splitsPerStep = State(initialValue: max(1, initialStep?.splitsPerStep ?? 1))
     }
 
     var body: some View {
@@ -882,9 +896,59 @@ private struct StepEditorSheet: View {
                 Section("Label") {
                     TextField("Optional label", text: $label)
                 }
+
+                if type == .work {
+                    Section {
+                        HStack {
+                            Text("Splits Per Step")
+                            Button {
+                                showSplitInfo = true
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(AppTheme.Palette.textSecondary)
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                            HStack(spacing: 10) {
+                                Button {
+                                    splitsPerStep = max(1, splitsPerStep - 1)
+                                } label: {
+                                    Image(systemName: "minus")
+                                        .font(.caption.weight(.bold))
+                                        .frame(width: 24, height: 24)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(splitsPerStep <= 1)
+
+                                Text("\(splitsPerStep)")
+                                    .font(.body.weight(.semibold))
+                                    .frame(minWidth: 24, alignment: .center)
+
+                                Button {
+                                    splitsPerStep = min(6, splitsPerStep + 1)
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.caption.weight(.bold))
+                                        .frame(width: 24, height: 24)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(splitsPerStep >= 6)
+                            }
+                        }
+                    } footer: {
+                        if splitsPerStep > 1 {
+                            Text("Timer records \(splitsPerStep) splits before moving to the next step.")
+                        }
+                    }
+                }
             }
             .navigationTitle("Step")
             .navigationBarTitleDisplayMode(.inline)
+            .alert("Splits Per Step", isPresented: $showSplitInfo) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Use this when one step should capture multiple splits. Example: 800m with 2 splits records a 400 split first, then the step completes on the second split.")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
@@ -909,6 +973,7 @@ private struct StepEditorSheet: View {
                 distanceValue: Double(distanceValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 400,
                 distanceUnit: distanceUnit,
                 durationMilliseconds: nil,
+                splitsPerStep: max(1, splitsPerStep),
                 label: trimmedLabel
             )
         }
@@ -921,6 +986,7 @@ private struct StepEditorSheet: View {
             distanceValue: nil,
             distanceUnit: nil,
             durationMilliseconds: max(0, (minutes * 60 + seconds) * 1_000),
+            splitsPerStep: 1,
             label: trimmedLabel
         )
     }
@@ -1027,95 +1093,69 @@ private struct StructuredSplitTable: View {
     let splits: [Split]
     let recoveryColor: Color
 
-    private let stepColumnWidth: CGFloat = 190
-    private let splitColumnWidth: CGFloat = 96
-    private let lapColumnWidth: CGFloat = 96
-    private let paceColumnWidth: CGFloat = 104
-
-    private var minimumTableWidth: CGFloat {
-        let base = stepColumnWidth + splitColumnWidth + lapColumnWidth
-        return hasDistanceData ? base + paceColumnWidth + 20 : base + 20
-    }
-
-    private var hasDistanceData: Bool {
-        splits.contains { split in
-            guard let value = split.stepDistanceValue else { return false }
-            return value > 0 && split.stepDistanceUnit != nil
-        }
-    }
-
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            VStack(spacing: 0) {
-                headerRow
+        VStack(spacing: 0) {
+            headerRow
+            Divider()
+                .background(AppTheme.Palette.border)
 
-                ForEach(Array(splits.enumerated()), id: \.element.id) { index, split in
-                    let previousElapsed = index > 0 ? splits[index - 1].elapsedMilliseconds : 0
-                    let lapMilliseconds = max(0, split.elapsedMilliseconds - previousElapsed)
-                    let rowStyle = style(for: split)
+            ForEach(Array(splits.enumerated()), id: \.element.id) { index, split in
+                let previousElapsed = index > 0 ? splits[index - 1].elapsedMilliseconds : 0
+                let lapMilliseconds = max(0, split.elapsedMilliseconds - previousElapsed)
 
-                    HStack(spacing: 0) {
-                        Text(stepName(for: split))
-                            .lineLimit(1)
-                            .frame(width: stepColumnWidth, alignment: .leading)
-                            .foregroundStyle(rowStyle.labelColor)
-                            .italic(split.stepType == .recovery)
+                row(for: split, lapMilliseconds: lapMilliseconds)
 
-                        Text(formatElapsedTime(milliseconds: split.elapsedMilliseconds))
-                            .frame(width: splitColumnWidth, alignment: .trailing)
-                            .foregroundStyle(rowStyle.valueColor)
-                            .monospacedDigit()
-
-                        Text(formatElapsedTime(milliseconds: lapMilliseconds))
-                            .frame(width: lapColumnWidth, alignment: .trailing)
-                            .foregroundStyle(rowStyle.valueColor)
-                            .monospacedDigit()
-
-                        if hasDistanceData {
-                            Text(paceText(for: split, lapMilliseconds: lapMilliseconds))
-                                .frame(width: paceColumnWidth, alignment: .trailing)
-                                .foregroundStyle(rowStyle.paceColor)
-                                .monospacedDigit()
-                        }
-                    }
-                    .font(rowStyle.font)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(rowStyle.backgroundColor)
-
-                    if index < splits.count - 1 {
-                        Divider()
-                    }
+                if index < splits.count - 1 {
+                    Divider()
+                        .background(AppTheme.Palette.border)
                 }
             }
-            .frame(minWidth: minimumTableWidth, alignment: .leading)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(AppTheme.Palette.border, lineWidth: 1)
-            )
         }
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(AppTheme.Palette.elevatedSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AppTheme.Palette.border, lineWidth: 1)
+        )
     }
 
     private var headerRow: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 8) {
             Text("Step")
-                .frame(width: stepColumnWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text("Split")
-                .frame(width: splitColumnWidth, alignment: .trailing)
+                .frame(width: 78, alignment: .trailing)
             Text("Lap")
-                .frame(width: lapColumnWidth, alignment: .trailing)
-            if hasDistanceData {
-                Text("Pace")
-                    .frame(width: paceColumnWidth, alignment: .trailing)
-            }
+                .frame(width: 78, alignment: .trailing)
+            Text("Pace")
+                .frame(width: 86, alignment: .trailing)
         }
-        .font(.caption2.weight(.bold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(AppTheme.Palette.textSecondary)
-        .textCase(.uppercase)
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(AppTheme.Palette.surface)
+    }
+
+    private func row(for split: Split, lapMilliseconds: Int) -> some View {
+        HStack(spacing: 8) {
+            Text(stepName(for: split))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
+                .foregroundStyle(split.stepType == .recovery ? recoveryColor : AppTheme.Palette.textPrimary)
+            Text(formattedSplitMilliseconds(split.elapsedMilliseconds))
+                .frame(width: 78, alignment: .trailing)
+            Text(formattedSplitMilliseconds(lapMilliseconds))
+                .frame(width: 78, alignment: .trailing)
+            Text(paceText(for: split, lapMilliseconds: lapMilliseconds))
+                .frame(width: 86, alignment: .trailing)
+                .foregroundStyle(split.stepType == .recovery ? recoveryColor : AppTheme.Palette.textPrimary)
+        }
+        .font(.system(size: 13, weight: .medium, design: .rounded))
+        .monospacedDigit()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 
     private func stepName(for split: Split) -> String {
@@ -1130,10 +1170,17 @@ private struct StructuredSplitTable: View {
         if let distanceValue = split.stepDistanceValue, let distanceUnit = split.stepDistanceUnit {
             return formattedDistance(value: distanceValue, unit: distanceUnit)
         }
-        return "S\(split.splitNumber)"
+        if split.stepType == .recovery {
+            return "Recovery"
+        }
+        return "Split \(split.splitNumber)"
     }
 
     private func paceText(for split: Split, lapMilliseconds: Int) -> String {
+        if split.stepType == .recovery {
+            return "--"
+        }
+
         guard let distanceValue = split.stepDistanceValue,
               let distanceUnit = split.stepDistanceUnit,
               distanceValue > 0,
@@ -1146,6 +1193,22 @@ private struct StructuredSplitTable: View {
 
         let paceMinutes = (Double(lapMilliseconds) / 60_000.0) / distanceInMiles
         return "\(formatPaceMinutes(paceMinutes))/mi"
+    }
+
+    private func formattedSplitMilliseconds(_ milliseconds: Int?) -> String {
+        guard let milliseconds, milliseconds >= 0 else { return "--" }
+
+        let totalSeconds = milliseconds / 1_000
+        let centiseconds = (milliseconds % 1_000) / 10
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d.%02d", hours, minutes, seconds, centiseconds)
+        }
+
+        return String(format: "%d:%02d.%02d", minutes, seconds, centiseconds)
     }
 
     private func convertDistanceToMiles(value: Double, unit: DistanceUnit) -> Double {
@@ -1181,43 +1244,6 @@ private struct StructuredSplitTable: View {
         return "\(renderedValue)\(separator)\(unit.rawValue)"
     }
 
-    private func style(for split: Split) -> StructuredRowStyle {
-        if split.isFinal {
-            return StructuredRowStyle(
-                font: .footnote.weight(.bold),
-                labelColor: AppTheme.Palette.primary,
-                valueColor: AppTheme.Palette.primary,
-                paceColor: AppTheme.Palette.primary,
-                backgroundColor: AppTheme.Palette.primary.opacity(0.08)
-            )
-        }
-
-        if split.stepType == .recovery {
-            return StructuredRowStyle(
-                font: .footnote,
-                labelColor: recoveryColor,
-                valueColor: AppTheme.Palette.textPrimary,
-                paceColor: AppTheme.Palette.textSecondary,
-                backgroundColor: recoveryColor.opacity(0.08)
-            )
-        }
-
-        return StructuredRowStyle(
-            font: .footnote.weight(.semibold),
-            labelColor: AppTheme.Palette.textPrimary,
-            valueColor: AppTheme.Palette.textPrimary,
-            paceColor: AppTheme.Palette.primary,
-            backgroundColor: .clear
-        )
-    }
-}
-
-private struct StructuredRowStyle {
-    let font: Font
-    let labelColor: Color
-    let valueColor: Color
-    let paceColor: Color
-    let backgroundColor: Color
 }
 
 private struct GroupBucketKey: Hashable {

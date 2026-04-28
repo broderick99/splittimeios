@@ -110,8 +110,11 @@ final class TimerRuntimeStore: ObservableObject {
         )
 
         let key = groupKey(timer.groupID)
-        if var groupTiming = groupTimersByKey[key], groupTiming.startedAt == nil {
-            groupTiming.startedAt = now
+        if var groupTiming = groupTimersByKey[key] {
+            if groupTiming.startedAt == nil {
+                groupTiming.startedAt = now
+            }
+            groupTiming.stoppedAt = nil
             groupTimersByKey[key] = groupTiming
         }
 
@@ -119,7 +122,8 @@ final class TimerRuntimeStore: ObservableObject {
             athleteProgressByID[athleteID] = AthleteWorkoutProgress(
                 currentStepIndex: progress.currentStepIndex,
                 stepStatus: .active,
-                recoveryStartedAt: nil
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
             )
         }
     }
@@ -135,7 +139,8 @@ final class TimerRuntimeStore: ObservableObject {
             elapsedMilliseconds: Int(now.timeIntervalSince(startedAt) * 1000),
             timestamp: now,
             isFinal: true,
-            isRecoveryEnd: false
+            isRecoveryEnd: false,
+            stepIndex: athleteProgressByID[athleteID]?.currentStepIndex
         )
 
         timerStatesByID[athleteID] = AthleteTimerState(
@@ -167,7 +172,8 @@ final class TimerRuntimeStore: ObservableObject {
             athleteProgressByID[athleteID] = AthleteWorkoutProgress(
                 currentStepIndex: progress.currentStepIndex,
                 stepStatus: .completed,
-                recoveryStartedAt: nil
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
             )
         }
     }
@@ -177,13 +183,22 @@ final class TimerRuntimeStore: ObservableObject {
         guard let timer = timerStatesByID[athleteID], timer.status == .running, let startedAt = timer.startedAt else {
             return
         }
+        let progress = athleteProgressByID[athleteID]
+        let athleteSteps = structuredSteps(for: athleteID)
+        let currentStep = progress.flatMap { progress in
+            athleteSteps?.indices.contains(progress.currentStepIndex) == true
+                ? athleteSteps?[progress.currentStepIndex]
+                : nil
+        }
+        let stepIndex = progress?.currentStepIndex
 
         let split = RuntimeSplit(
             splitNumber: timer.splits.count + 1,
             elapsedMilliseconds: Int(now.timeIntervalSince(startedAt) * 1000),
             timestamp: now,
             isFinal: false,
-            isRecoveryEnd: false
+            isRecoveryEnd: false,
+            stepIndex: stepIndex
         )
 
         timerStatesByID[athleteID] = AthleteTimerState(
@@ -200,14 +215,37 @@ final class TimerRuntimeStore: ObservableObject {
             splits: timer.splits + [split]
         )
 
-        guard let progress = athleteProgressByID[athleteID], let structuredSteps = structuredSteps(for: athleteID) else { return }
+        guard let progress, let athleteSteps, let currentStep, progress.stepStatus == .active else { return }
+        let requiredSplits = requiredSplitsForStep(currentStep)
+        let recordedSplits = progress.recordedSplitsInCurrentStep + 1
+
+        if recordedSplits < requiredSplits {
+            athleteProgressByID[athleteID] = AthleteWorkoutProgress(
+                currentStepIndex: progress.currentStepIndex,
+                stepStatus: .active,
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: recordedSplits
+            )
+            return
+        }
+
         let nextIndex = progress.currentStepIndex + 1
-        guard nextIndex < structuredSteps.count else { return }
-        let nextStep = structuredSteps[nextIndex]
+        guard nextIndex < athleteSteps.count else {
+            athleteProgressByID[athleteID] = AthleteWorkoutProgress(
+                currentStepIndex: progress.currentStepIndex,
+                stepStatus: .active,
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
+            )
+            return
+        }
+
+        let nextStep = athleteSteps[nextIndex]
         athleteProgressByID[athleteID] = AthleteWorkoutProgress(
             currentStepIndex: nextIndex,
             stepStatus: nextStep.type == .recovery ? .recoveryCountdown : .active,
-            recoveryStartedAt: nextStep.type == .recovery ? now : nil
+            recoveryStartedAt: nextStep.type == .recovery ? now : nil,
+            recordedSplitsInCurrentStep: 0
         )
     }
 
@@ -230,13 +268,7 @@ final class TimerRuntimeStore: ObservableObject {
             splits: Array(timer.splits.dropLast())
         )
 
-        if let progress = athleteProgressByID[athleteID], progress.currentStepIndex > 0 {
-            athleteProgressByID[athleteID] = AthleteWorkoutProgress(
-                currentStepIndex: progress.currentStepIndex - 1,
-                stepStatus: .active,
-                recoveryStartedAt: nil
-            )
-        }
+        recomputeProgress(for: athleteID)
     }
 
     func advanceAthlete(_ athleteID: String) {
@@ -251,7 +283,8 @@ final class TimerRuntimeStore: ObservableObject {
             athleteProgressByID[athleteID] = AthleteWorkoutProgress(
                 currentStepIndex: progress.currentStepIndex,
                 stepStatus: .completed,
-                recoveryStartedAt: nil
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
             )
             return
         }
@@ -260,7 +293,8 @@ final class TimerRuntimeStore: ObservableObject {
         athleteProgressByID[athleteID] = AthleteWorkoutProgress(
             currentStepIndex: nextStepIndex,
             stepStatus: nextStep.type == .recovery ? .recoveryCountdown : .active,
-            recoveryStartedAt: nextStep.type == .recovery ? now : nil
+            recoveryStartedAt: nextStep.type == .recovery ? now : nil,
+            recordedSplitsInCurrentStep: 0
         )
     }
 
@@ -283,8 +317,11 @@ final class TimerRuntimeStore: ObservableObject {
         }
 
         let key = groupKey(groupID)
-        if var groupTiming = groupTimersByKey[key], groupTiming.startedAt == nil {
-            groupTiming.startedAt = now
+        if var groupTiming = groupTimersByKey[key] {
+            if groupTiming.startedAt == nil {
+                groupTiming.startedAt = now
+            }
+            groupTiming.stoppedAt = nil
             groupTimersByKey[key] = groupTiming
         }
 
@@ -293,7 +330,8 @@ final class TimerRuntimeStore: ObservableObject {
             athleteProgressByID[athleteID] = AthleteWorkoutProgress(
                 currentStepIndex: progress.currentStepIndex,
                 stepStatus: .active,
-                recoveryStartedAt: nil
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
             )
         }
     }
@@ -315,7 +353,8 @@ final class TimerRuntimeStore: ObservableObject {
             athleteProgressByID[athleteID] = AthleteWorkoutProgress(
                 currentStepIndex: progress.currentStepIndex,
                 stepStatus: .completed,
-                recoveryStartedAt: nil
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
             )
         }
     }
@@ -365,7 +404,12 @@ final class TimerRuntimeStore: ObservableObject {
         groupTimersByKey = groupTimersByKey.mapValues { _ in GroupTiming(startedAt: nil, stoppedAt: nil) }
 
         athleteProgressByID = athleteProgressByID.mapValues { _ in
-            AthleteWorkoutProgress(currentStepIndex: 0, stepStatus: .pending, recoveryStartedAt: nil)
+            AthleteWorkoutProgress(
+                currentStepIndex: 0,
+                stepStatus: .pending,
+                recoveryStartedAt: nil,
+                recordedSplitsInCurrentStep: 0
+            )
         }
     }
 
@@ -380,12 +424,17 @@ final class TimerRuntimeStore: ObservableObject {
             timerStates: orderedTimers,
             structuredSteps: savedStructuredSteps
         )
-        await uploadCompletedWorkoutToBackend(
-            workoutID: savedID,
-            workoutName: resolvedName,
-            templateID: templateID,
-            orderedTimers: orderedTimers
-        )
+        let savedTemplateID = templateID
+        let timersForUpload = orderedTimers
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.uploadCompletedWorkoutToBackend(
+                workoutID: savedID,
+                workoutName: resolvedName,
+                templateID: savedTemplateID,
+                orderedTimers: timersForUpload
+            )
+        }
         discardWorkout()
         return savedID
     }
@@ -454,6 +503,56 @@ final class TimerRuntimeStore: ObservableObject {
         return blocks
     }
 
+    func refreshAthleteMetadata(athletes: [Athlete], groups: [TeamGroup]) {
+        guard isActive, !timerStatesByID.isEmpty else { return }
+
+        let athletesByID = Dictionary(uniqueKeysWithValues: athletes.map { ($0.id, $0) })
+        let groupsByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+
+        var didChange = false
+        var nextStates: [String: AthleteTimerState] = [:]
+
+        for (athleteID, timer) in timerStatesByID {
+            guard let athlete = athletesByID[athleteID] else {
+                nextStates[athleteID] = timer
+                continue
+            }
+
+            let group = athlete.groupID.flatMap { groupsByID[$0] }
+            let updated = AthleteTimerState(
+                id: timer.id,
+                athleteID: timer.athleteID,
+                athleteName: athlete.name,
+                photoURL: athlete.photoURL,
+                groupID: athlete.groupID,
+                groupName: group?.name,
+                groupColorHex: group?.colorHex,
+                status: timer.status,
+                startedAt: timer.startedAt,
+                stoppedAt: timer.stoppedAt,
+                splits: timer.splits
+            )
+
+            if updated != timer {
+                didChange = true
+            }
+
+            nextStates[athleteID] = updated
+        }
+
+        let nextActiveGroups = groups
+            .filter { group in nextStates.values.contains(where: { $0.groupID == group.id }) }
+            .sorted { $0.sortOrder < $1.sortOrder }
+
+        if nextActiveGroups != activeGroups {
+            activeGroups = nextActiveGroups
+            didChange = true
+        }
+
+        guard didChange else { return }
+        timerStatesByID = nextStates
+    }
+
     func elapsedMilliseconds(for groupBlock: GroupTimerBlock) -> Int {
         let target = groupedTimers(autoReorder: false).first { $0.id == groupBlock.id }
         guard let block = target else { return 0 }
@@ -499,7 +598,8 @@ final class TimerRuntimeStore: ObservableObject {
                 nextProgress[athlete.id] = AthleteWorkoutProgress(
                     currentStepIndex: 0,
                     stepStatus: .pending,
-                    recoveryStartedAt: nil
+                    recoveryStartedAt: nil,
+                    recordedSplitsInCurrentStep: 0
                 )
             }
         }
@@ -580,7 +680,8 @@ final class TimerRuntimeStore: ObservableObject {
             elapsedMilliseconds: Int(timestamp.timeIntervalSince(startedAt) * 1000),
             timestamp: timestamp,
             isFinal: false,
-            isRecoveryEnd: true
+            isRecoveryEnd: true,
+            stepIndex: athleteProgressByID[athleteID]?.currentStepIndex
         )
 
         timerStatesByID[athleteID] = AthleteTimerState(
@@ -633,10 +734,101 @@ final class TimerRuntimeStore: ObservableObject {
                 athleteProgressByID[athleteID] = AthleteWorkoutProgress(
                     currentStepIndex: progress.currentStepIndex,
                     stepStatus: .recoveryWaiting,
-                    recoveryStartedAt: recoveryStartedAt
+                    recoveryStartedAt: recoveryStartedAt,
+                    recordedSplitsInCurrentStep: progress.recordedSplitsInCurrentStep
                 )
             }
         }
+    }
+
+    private func requiredSplitsForStep(_ step: ExpandedStep) -> Int {
+        guard step.type == .work else { return 1 }
+        return max(1, step.splitsPerStep ?? 1)
+    }
+
+    private func recomputeProgress(for athleteID: String) {
+        guard let timer = timerStatesByID[athleteID],
+              let steps = structuredSteps(for: athleteID),
+              !steps.isEmpty
+        else { return }
+
+        var index = 0
+        var stepStatus: AthleteStepStatus = timer.status == .idle ? .pending : .active
+        var recoveryStartedAt: Date?
+        var recordedSplits = 0
+
+        for split in timer.splits where !split.isFinal {
+            if split.isRecoveryEnd {
+                index += 1
+                recordedSplits = 0
+                recoveryStartedAt = nil
+
+                if index >= steps.count {
+                    index = max(0, steps.count - 1)
+                    stepStatus = timer.status == .stopped ? .completed : .active
+                    break
+                }
+
+                let nextStep = steps[index]
+                if nextStep.type == .recovery {
+                    stepStatus = .recoveryCountdown
+                    recoveryStartedAt = split.timestamp
+                } else {
+                    stepStatus = .active
+                }
+                continue
+            }
+
+            guard index < steps.count else { break }
+            let step = steps[index]
+            let requiredSplits = requiredSplitsForStep(step)
+            recordedSplits += 1
+
+            if recordedSplits >= requiredSplits {
+                index += 1
+                recordedSplits = 0
+                if index >= steps.count {
+                    index = max(0, steps.count - 1)
+                    stepStatus = timer.status == .stopped ? .completed : .active
+                    break
+                }
+                let nextStep = steps[index]
+                if nextStep.type == .recovery {
+                    stepStatus = .recoveryCountdown
+                    recoveryStartedAt = split.timestamp
+                } else {
+                    stepStatus = .active
+                    recoveryStartedAt = nil
+                }
+            } else {
+                stepStatus = .active
+                recoveryStartedAt = nil
+            }
+        }
+
+        if stepStatus == .recoveryCountdown,
+           let recoveryStartedAt,
+           steps.indices.contains(index),
+           let duration = steps[index].durationMilliseconds
+        {
+            let elapsed = Int(Date().timeIntervalSince(recoveryStartedAt) * 1000)
+            if elapsed >= duration {
+                stepStatus = .recoveryWaiting
+            }
+        }
+
+        if timer.status == .stopped {
+            stepStatus = .completed
+            recoveryStartedAt = nil
+            recordedSplits = 0
+        }
+
+        athleteProgressByID[athleteID] = AthleteWorkoutProgress(
+            currentStepIndex: index,
+            stepStatus: stepStatus,
+            recoveryStartedAt: recoveryStartedAt,
+            recordedSplitsInCurrentStep: recordedSplits
+        )
     }
 
     private var defaultWorkoutName: String {

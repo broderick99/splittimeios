@@ -44,8 +44,10 @@ struct TopTabBar<Option: Hashable>: View {
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 46)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
             }
         }
         .background(AppTheme.Palette.elevatedSurface)

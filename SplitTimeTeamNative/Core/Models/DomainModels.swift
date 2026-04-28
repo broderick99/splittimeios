@@ -113,6 +113,7 @@ struct TeamRosterMember: Codable, Identifiable, Hashable, Sendable {
     let phone: String?
     let age: Int?
     let grade: String?
+    let photoURL: URL?
 
     var fullName: String {
         "\(firstName) \(lastName)".trimmingCharacters(in: .whitespacesAndNewlines)
@@ -177,6 +178,7 @@ struct Announcement: Codable, Identifiable, Hashable, Sendable {
     let teamID: String
     let title: String
     let body: String
+    let authorUserID: String
     let authorName: String
     let createdAt: Date
 }
@@ -218,6 +220,30 @@ struct ChatMessage: Codable, Identifiable, Hashable, Sendable {
     var isPhotoOnly: Bool {
         imageURL != nil && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+}
+
+struct DirectMessage: Codable, Identifiable, Hashable, Sendable {
+    let id: String
+    let threadID: String
+    let teamID: String
+    let senderUserID: String
+    let senderName: String
+    let senderRole: UserRole
+    let body: String
+    let imageURL: URL?
+    let createdAt: Date
+}
+
+struct DirectMessageConversation: Codable, Identifiable, Hashable, Sendable {
+    let threadID: String
+    let participantUserID: String
+    let participantName: String
+    let participantRole: UserRole
+    let participantPhotoURL: URL?
+    let latestMessage: DirectMessage?
+    let hasUnreadIncoming: Bool
+
+    var id: String { participantUserID }
 }
 
 enum ActivitySource: String, Codable, Hashable, Sendable {
@@ -462,6 +488,7 @@ struct TemplateStep: Codable, Identifiable, Hashable, Sendable {
     let distanceValue: Double?
     let distanceUnit: DistanceUnit?
     let durationMilliseconds: Int?
+    let splitsPerStep: Int?
     let label: String
     let repeatGroupID: String?
 }
@@ -535,6 +562,12 @@ struct CompletedWorkoutSplitUpload: Codable, Hashable, Sendable {
     let stepLabel: String?
 }
 
+struct CompletedWorkoutHistorySnapshot: Hashable, Sendable {
+    let workouts: [Workout]
+    let workoutAthletes: [WorkoutAthlete]
+    let splits: [Split]
+}
+
 struct WorkoutAthleteResult: Identifiable, Hashable, Sendable {
     let id: String
     let athleteID: String
@@ -557,6 +590,7 @@ struct RuntimeSplit: Codable, Hashable, Sendable {
     let timestamp: Date
     let isFinal: Bool
     let isRecoveryEnd: Bool
+    let stepIndex: Int?
 }
 
 struct AthleteTimerState: Identifiable, Hashable, Sendable {
@@ -596,6 +630,7 @@ struct AthleteWorkoutProgress: Hashable, Sendable {
     let currentStepIndex: Int
     let stepStatus: AthleteStepStatus
     let recoveryStartedAt: Date?
+    let recordedSplitsInCurrentStep: Int
 }
 
 struct ExpandedStep: Identifiable, Hashable, Sendable {
@@ -605,6 +640,7 @@ struct ExpandedStep: Identifiable, Hashable, Sendable {
     let distanceValue: Double?
     let distanceUnit: DistanceUnit?
     let durationMilliseconds: Int?
+    let splitsPerStep: Int?
     let label: String
     let repeatIteration: Int?
     let repeatTotal: Int?
@@ -616,6 +652,7 @@ struct BuilderStep: Identifiable, Hashable, Sendable {
     let distanceValue: Double?
     let distanceUnit: DistanceUnit?
     let durationMilliseconds: Int?
+    let splitsPerStep: Int?
     let label: String
 }
 
@@ -645,13 +682,59 @@ enum BuilderItem: Identifiable, Hashable, Sendable {
     }
 }
 
+enum TimerAthleteLayoutStyle: String, Codable, CaseIterable, Sendable {
+    case row
+    case card
+
+    var title: String {
+        switch self {
+        case .row:
+            return "Rows"
+        case .card:
+            return "Cards"
+        }
+    }
+}
+
 struct TimerPreferences: Codable, Hashable, Sendable {
     var autoReorderAthletes: Bool
     var showTapHints: Bool
+    var athleteLayout: TimerAthleteLayoutStyle
+
+    init(
+        autoReorderAthletes: Bool,
+        showTapHints: Bool,
+        athleteLayout: TimerAthleteLayoutStyle
+    ) {
+        self.autoReorderAthletes = autoReorderAthletes
+        self.showTapHints = showTapHints
+        self.athleteLayout = athleteLayout
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case autoReorderAthletes
+        case showTapHints
+        case athleteLayout
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        autoReorderAthletes = try container.decodeIfPresent(Bool.self, forKey: .autoReorderAthletes) ?? true
+        showTapHints = try container.decodeIfPresent(Bool.self, forKey: .showTapHints) ?? true
+        athleteLayout = try container.decodeIfPresent(TimerAthleteLayoutStyle.self, forKey: .athleteLayout) ?? .row
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(autoReorderAthletes, forKey: .autoReorderAthletes)
+        try container.encode(showTapHints, forKey: .showTapHints)
+        try container.encode(athleteLayout, forKey: .athleteLayout)
+    }
 
     static let `default` = TimerPreferences(
         autoReorderAthletes: true,
-        showTapHints: true
+        showTapHints: true,
+        athleteLayout: .row
     )
 }
 

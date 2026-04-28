@@ -588,13 +588,20 @@ private enum BuilderUIKitStyle {
     static let repeatOuterTopGap: CGFloat = 10
 
     static func summary(for step: BuilderStep) -> String {
+        let base: String
         if let distanceValue = step.distanceValue, let distanceUnit = step.distanceUnit {
-            return "\(formattedDistance(distanceValue))\(distanceUnit == .meters ? "" : " ")\(distanceUnit.rawValue)"
+            base = "\(formattedDistance(distanceValue))\(distanceUnit == .meters ? "" : " ")\(distanceUnit.rawValue)"
+        } else if let duration = step.durationMilliseconds {
+            base = formatCountdown(milliseconds: duration)
+        } else {
+            base = step.type == .work ? "Work" : "Recovery"
         }
-        if let duration = step.durationMilliseconds {
-            return formatCountdown(milliseconds: duration)
+
+        if step.type == .work, (step.splitsPerStep ?? 1) > 1 {
+            return "\(base) • x\(step.splitsPerStep ?? 1) splits"
         }
-        return step.type == .work ? "Work" : "Recovery"
+
+        return base
     }
 
     private static func formattedDistance(_ value: Double) -> String {
